@@ -69,6 +69,16 @@ function humanizeError(data, fallback = "Something went wrong. Please try again.
   }
   return fallback;
 }
+function fallbackForStatus(status) {
+  if (status === 403) return "You do not have permission to do that.";
+  if (status === 404) return "That resource was not found.";
+  if (status === 408 || status === 504) {
+    return "The server took too long to respond. Please try again.";
+  }
+  if (status === 429) return "Too many requests. Please wait a moment and try again.";
+  if (status >= 500) return "The server is temporarily unavailable. Please try again later.";
+  return "Request failed. Please try again.";
+}
 async function readBody(response) {
   const text = await response.text();
   if (!text) return null;
@@ -102,7 +112,10 @@ async function request(path, options = {}) {
       body: body === void 0 ? void 0 : body instanceof FormData ? body : JSON.stringify(body)
     });
   } catch {
-    throw new ApiError("Cannot reach the server. Is the backend running?", { status: 0 });
+    throw new ApiError(
+      "We could not reach the server. Check your connection and try again.",
+      { status: 0 }
+    );
   }
   if (response.status === 401 && auth && retry) {
     const refreshed = await refreshAccessToken();
@@ -114,12 +127,10 @@ async function request(path, options = {}) {
     throw new ApiError("Your session has expired. Please log in again.", { status: 401 });
   }
   const data = await readBody(response);
+  const requestId = response.headers?.get?.("X-Request-ID") || null;
   if (!response.ok) {
-    const message = humanizeError(
-      data,
-      response.status === 403 ? "You do not have permission to do that." : response.status === 404 ? "That resource was not found." : response.status >= 500 ? "The server had a problem. Please try again later." : "Request failed. Please try again."
-    );
-    throw new ApiError(message, { status: response.status, data });
+    const message = humanizeError(data, fallbackForStatus(response.status));
+    throw new ApiError(message, { status: response.status, data, requestId });
   }
   return data;
 }
@@ -172,11 +183,12 @@ var init_api = __esm({
       }
     };
     ApiError = class extends Error {
-      constructor(message, { status = 0, data = null } = {}) {
+      constructor(message, { status = 0, data = null, requestId = null } = {}) {
         super(message);
         this.name = "ApiError";
         this.status = status;
         this.data = data;
+        this.requestId = requestId;
       }
     };
     api = {

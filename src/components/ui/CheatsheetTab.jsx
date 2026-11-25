@@ -97,7 +97,7 @@ export default function CheatsheetTab({ cheatsheet }) {
               }}>
                 <CategoryIcon size={11} strokeWidth={2.4} /> {entry.category}
               </span>
-              <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5 }}>
+              <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', lineHeight: 1.5, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                 {entry.description}
               </span>
             </div>

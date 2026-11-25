@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { createPortal } from 'react-dom';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { Plus, MoreVertical, Edit, Eye, Copy, ToggleLeft, ToggleRight, Trash2, Search, CheckCircle, Clock, Upload, AlertTriangle, RefreshCw } from 'lucide-react';
 import { challengeService } from '../../services/challengeService';
 import LoadingSpinner from '../../components/ui/LoadingSpinner';
@@ -113,6 +113,7 @@ function scheduledValue(v) {
 }
 
 export default function ManageChallenges() {
+  const navigate = useNavigate();
   const [challenges, setChallenges] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -164,28 +165,11 @@ export default function ManageChallenges() {
     }
     if (action === 'duplicate') {
       try {
-        const dup = await challengeService.createChallenge({
-          title: `${challenge.title} (Copy)`,
-          category: challenge.category,
-          difficulty: challenge.difficulty,
-          points: challenge.points,
-          description: challenge.description,
-          scenario: challenge.scenario,
-          objectives: challenge.objectives,
-          instructions: challenge.instructions,
-          author: challenge.author,
-          tags: challenge.tags,
-          featured: false,
-          trial: false,
-          connectionInfo: challenge.connectionInfo,
-          cheatsheet: challenge.cheatsheet,
-          status: 'draft',
-          flag: 'CTF{duplicate_flag}',
-        });
-        await load();
-        showToast(`Duplicated "${challenge.title}"`);
+        // Fetch full admin record (includes mode_content); never copy plaintext flag.
+        const full = await challengeService.getChallengeByIdAdmin(challenge.id);
+        navigate('/admin/challenges/new', { state: { duplicateFrom: full } });
       } catch (e) {
-        showToast(e.message, true);
+        showToast(e.message || 'Failed to load challenge for duplication.', true);
       }
       return;
     }

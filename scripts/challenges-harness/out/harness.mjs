@@ -92,6 +92,16 @@ function humanizeError(data, fallback = "Something went wrong. Please try again.
   }
   return fallback;
 }
+function fallbackForStatus(status) {
+  if (status === 403) return "You do not have permission to do that.";
+  if (status === 404) return "That resource was not found.";
+  if (status === 408 || status === 504) {
+    return "The server took too long to respond. Please try again.";
+  }
+  if (status === 429) return "Too many requests. Please wait a moment and try again.";
+  if (status >= 500) return "The server is temporarily unavailable. Please try again later.";
+  return "Request failed. Please try again.";
+}
 async function readBody(response) {
   const text = await response.text();
   if (!text) return null;
@@ -125,7 +135,10 @@ async function request(path, options = {}) {
       body: body === void 0 ? void 0 : body instanceof FormData ? body : JSON.stringify(body)
     });
   } catch {
-    throw new ApiError("Cannot reach the server. Is the backend running?", { status: 0 });
+    throw new ApiError(
+      "We could not reach the server. Check your connection and try again.",
+      { status: 0 }
+    );
   }
   if (response.status === 401 && auth && retry) {
     const refreshed = await refreshAccessToken();
@@ -137,12 +150,10 @@ async function request(path, options = {}) {
     throw new ApiError("Your session has expired. Please log in again.", { status: 401 });
   }
   const data = await readBody(response);
+  const requestId = response.headers?.get?.("X-Request-ID") || null;
   if (!response.ok) {
-    const message = humanizeError(
-      data,
-      response.status === 403 ? "You do not have permission to do that." : response.status === 404 ? "That resource was not found." : response.status >= 500 ? "The server had a problem. Please try again later." : "Request failed. Please try again."
-    );
-    throw new ApiError(message, { status: response.status, data });
+    const message = humanizeError(data, fallbackForStatus(response.status));
+    throw new ApiError(message, { status: response.status, data, requestId });
   }
   return data;
 }
@@ -195,11 +206,12 @@ var init_api = __esm({
       }
     };
     ApiError = class extends Error {
-      constructor(message, { status = 0, data = null } = {}) {
+      constructor(message, { status = 0, data = null, requestId = null } = {}) {
         super(message);
         this.name = "ApiError";
         this.status = status;
         this.data = data;
+        this.requestId = requestId;
       }
     };
     api = {
@@ -218,8 +230,35 @@ var init_api = __esm({
 var challengeService_exports = {};
 __export(challengeService_exports, {
   challengeService: () => challengeService,
-  default: () => challengeService_default
+  default: () => challengeService_default,
+  normalizeInstance: () => normalizeInstance
 });
+function normalizeInstance(payload) {
+  if (!payload) return null;
+  const meta = payload.connection_meta || {};
+  const type = meta.type || "";
+  const host = meta.host || "";
+  const port = meta.port ? Number(meta.port) : null;
+  const target = meta.target || (host && port ? `${host}:${port}` : "");
+  const url = meta.url || ((type === "http" || type === "https") && target ? `${type}://${target}` : "");
+  const expiresAt = payload.expires_at ? Date.parse(payload.expires_at) : null;
+  const remainingSeconds = Number.isFinite(Number(payload.remaining_seconds)) ? Number(payload.remaining_seconds) : expiresAt ? Math.max(0, Math.floor((expiresAt - Date.now()) / 1e3)) : 0;
+  return {
+    id: payload.id,
+    challengeId: payload.challenge_id,
+    challengeTitle: payload.challenge_title || "",
+    status: payload.status,
+    expiresAt: Number.isFinite(expiresAt) ? expiresAt : null,
+    remainingSeconds,
+    createdAt: payload.created_at || null,
+    stoppedAt: payload.stopped_at || null,
+    failureReason: payload.failure_reason || "",
+    connection: { type, host, port, target, url },
+    // Kept for the existing UI copy/open affordances; derived only from real
+    // connection metadata, never fabricated by the frontend.
+    command: url || target || ""
+  };
+}
 var challengeService, challengeService_default;
 var init_challengeService = __esm({
   "src/services/challengeService.js"() {
@@ -287,31 +326,37 @@ var init_challengeService = __esm({
       async revealHint(challengeId, hintId) {
         return api.post(`/challenges/${challengeId}/hints/${hintId}/reveal/`, {});
       },
-      // ─── Challenge Instances (mock — Docker stage) ────────────────────────────
+      // ─── Challenge Instances (real Docker runtime) ────────────────────────────
       /**
-       * Start a fresh instance for a challenge.
-       * TODO: Replace with POST /api/challenges/:id/instances
+       * Start a fresh Docker-backed instance for a challenge.
+       * POST /api/v1/challenges/:id/instances/start/
        */
       async startInstance(challengeId) {
-        const delay = (ms = 1200) => new Promise((res) => setTimeout(res, ms));
-        await delay();
-        return null;
+        const payload = await api.post(`/challenges/${challengeId}/instances/start/`, {});
+        return normalizeInstance(payload);
       },
       /**
-       * Stop / terminate a running instance.
-       * TODO: Replace with DELETE /api/challenges/:id/instances/active
+       * Stop / terminate the caller's active instance.
+       * DELETE /api/v1/challenges/instances/active/
        */
       async stopInstance(challengeId) {
-        const delay = (ms = 400) => new Promise((res) => setTimeout(res, ms));
-        await delay();
-        return { success: true };
+        const payload = await api.delete("/challenges/instances/active/");
+        const instance = normalizeInstance(payload);
+        return instance && challengeId != null && String(instance.challengeId) !== String(challengeId) ? null : instance;
       },
       /**
-       * Get the currently active instance for a challenge (if any).
-       * TODO: Replace with GET /api/challenges/:id/instances/active
+       * Get the currently active instance (globally for this user). A row for a
+       * different challenge is treated as "none" so this page can offer Start.
+       * GET /api/v1/challenges/instances/active/
        */
       async getInstance(challengeId) {
-        return null;
+        const payload = await api.get("/challenges/instances/active/");
+        const instance = normalizeInstance(payload);
+        if (!instance) return null;
+        if (challengeId != null && String(instance.challengeId) !== String(challengeId)) {
+          return null;
+        }
+        return instance;
       },
       // ─── Admin API ────────────────────────────────────────────────────────────
       /**
@@ -379,6 +424,31 @@ var init_challengeService = __esm({
        */
       async deleteAttachment(id, attachmentId) {
         return api.delete(`/admin/challenges/${id}/attachments/${attachmentId}/`);
+      },
+      // ─── Admin Categories ────────────────────────────────────────────────────
+      /**
+       * Create a category. Admin only.
+       * POST /api/v1/admin/categories/
+       */
+      async createCategory(data) {
+        return api.post("/admin/categories/", data);
+      },
+      /**
+       * Update a category. Admin only.
+       * PATCH /api/v1/admin/categories/:id/
+       */
+      async updateCategory(id, data) {
+        return api.patch(`/admin/categories/${id}/`, data);
+      },
+      /**
+       * Delete an unused category. Admin only.
+       * DELETE /api/v1/admin/categories/:id/
+       *
+       * The server refuses to delete a category referenced by a challenge or an
+       * achievement rule; it never cascades or reassigns those records.
+       */
+      async deleteCategory(id) {
+        return api.delete(`/admin/categories/${id}/`);
       }
     };
     challengeService_default = challengeService;
@@ -401,7 +471,7 @@ function boardQuery({ period, category, page, limit } = {}) {
   return qs ? `?${qs}` : "";
 }
 async function fetchBoard(params = {}) {
-  const data = await api.get(`/leaderboard/${boardQuery(params)}`, { auth: false });
+  const data = await api.get(`/leaderboard/${boardQuery(params)}`);
   return data.results ?? data;
 }
 var leaderboardService, leaderboardService_default;
@@ -434,7 +504,7 @@ var init_leaderboardService = __esm({
        * Raw paginated envelope: { count, next, previous, results }.
        */
       async getLeaderboardPage(params = {}) {
-        return api.get(`/leaderboard/${boardQuery(params)}`, { auth: false });
+        return api.get(`/leaderboard/${boardQuery(params)}`);
       },
       /**
        * The signed-in user's own standing, even when off the current page.
@@ -482,7 +552,20 @@ var init_statsService = __esm({
        *       level, tier, points, levelMin, nextLevelMin, toNext,
        *       progressPct, elitePct, isMax,
        *     },                       // derived from earnedPoints, never the balance
+       *     current_streak,          // consecutive solve-days (today or yesterday)
+       *     longest_streak,          // longest run of consecutive solve-days ever
+       *     currentStreak,           // camelCase alias of current_streak
+       *     longestStreak,           // camelCase alias of longest_streak
        *   }
+       *
+       * A streak day is a calendar day in the server's configured timezone on
+       * which the caller recorded at least one successful solve. Failed
+       * submissions, hint unlocks and logins never count, and several solves on
+       * the same day still count as a single day. Both values are 0 for a player
+       * who has never solved anything.
+       *
+       * The two streaks are served under both spellings, which always carry the
+       * same value; `src/context/AppContext.jsx` normalises them once.
        */
       async getMyStats() {
         return api.get("/stats/me/");
@@ -22668,6 +22751,80 @@ var init_activity = __esm({
   }
 });
 
+// src/utils/categoryForm.js
+var categoryForm_exports = {};
+__export(categoryForm_exports, {
+  CATEGORY_FIELDS: () => CATEGORY_FIELDS,
+  EMPTY_CATEGORY_DRAFT: () => EMPTY_CATEGORY_DRAFT,
+  buildCategoryPayload: () => buildCategoryPayload,
+  categoryFieldErrors: () => categoryFieldErrors,
+  categoryToDraft: () => categoryToDraft,
+  validateCategoryDraft: () => validateCategoryDraft
+});
+function categoryToDraft(category) {
+  return {
+    name: category?.name || "",
+    description: category?.description || "",
+    icon: category?.icon || "",
+    color: category?.color || "",
+    order: Number.isFinite(Number(category?.order)) ? Number(category.order) : 0
+  };
+}
+function buildCategoryPayload(draft) {
+  return {
+    name: (draft?.name || "").trim(),
+    description: (draft?.description || "").trim(),
+    icon: (draft?.icon || "").trim(),
+    color: (draft?.color || "").trim(),
+    order: Number.parseInt(draft?.order, 10)
+  };
+}
+function validateCategoryDraft(draft) {
+  const errors = {};
+  const payload = buildCategoryPayload(draft);
+  if (!payload.name) {
+    errors.name = "Enter a category name.";
+  } else if (payload.name.length > 100) {
+    errors.name = "Use 100 characters or fewer.";
+  }
+  if (payload.icon.length > 60) {
+    errors.icon = "Use 60 characters or fewer.";
+  }
+  if (payload.color.length > 20) {
+    errors.color = "Use 20 characters or fewer.";
+  }
+  if (!Number.isInteger(payload.order) || payload.order < 0) {
+    errors.order = "Enter a whole number of 0 or more.";
+  } else if (payload.order > 2147483647) {
+    errors.order = "Enter a smaller whole number.";
+  }
+  return errors;
+}
+function categoryFieldErrors(data) {
+  const errors = {};
+  if (!data || typeof data !== "object" || Array.isArray(data)) return errors;
+  for (const field of CATEGORY_FIELDS) {
+    const value = data[field];
+    if (value == null) continue;
+    const text = Array.isArray(value) ? value.filter((part) => typeof part === "string").join(" ") : typeof value === "string" ? value : "";
+    if (text) errors[field] = text;
+  }
+  return errors;
+}
+var CATEGORY_FIELDS, EMPTY_CATEGORY_DRAFT;
+var init_categoryForm = __esm({
+  "src/utils/categoryForm.js"() {
+    CATEGORY_FIELDS = ["name", "description", "icon", "color", "order"];
+    EMPTY_CATEGORY_DRAFT = Object.freeze({
+      name: "",
+      description: "",
+      icon: "",
+      color: "",
+      order: 0
+    });
+  }
+});
+
 // src/data/notifications.js
 var notifications_exports = {};
 __export(notifications_exports, {
@@ -22819,7 +22976,7 @@ var fetchStub = async (url, options = {}) => {
 globalThis.localStorage = localStorage2;
 globalThis.window = window2;
 globalThis.fetch = fetchStub;
-var { challengeService: challengeService2 } = await Promise.resolve().then(() => (init_challengeService(), challengeService_exports));
+var { challengeService: challengeService2, normalizeInstance: normalizeInstance2 } = await Promise.resolve().then(() => (init_challengeService(), challengeService_exports));
 var { leaderboardService: leaderboardService2 } = await Promise.resolve().then(() => (init_leaderboardService(), leaderboardService_exports));
 var { statsService: statsService2 } = await Promise.resolve().then(() => (init_statsService(), statsService_exports));
 var { authService: authService2 } = await Promise.resolve().then(() => (init_authService(), authService_exports));
@@ -22834,6 +22991,13 @@ var {
 var { api: api2, tokenStore: tokenStore2, ApiError: ApiError2 } = await Promise.resolve().then(() => (init_api(), api_exports));
 var { resolveFocusAreas: resolveFocusAreas2, EMPTY_FOCUS_AREAS: EMPTY_FOCUS_AREAS2 } = await Promise.resolve().then(() => (init_focusAreas(), focusAreas_exports));
 var { activityKey: activityKey2 } = await Promise.resolve().then(() => (init_activity(), activity_exports));
+var {
+  EMPTY_CATEGORY_DRAFT: EMPTY_CATEGORY_DRAFT2,
+  categoryToDraft: categoryToDraft2,
+  buildCategoryPayload: buildCategoryPayload2,
+  validateCategoryDraft: validateCategoryDraft2,
+  categoryFieldErrors: categoryFieldErrors2
+} = await Promise.resolve().then(() => (init_categoryForm(), categoryForm_exports));
 var BASE = "https://api.example.test/api/v1";
 var tests = [];
 var test = (name, fn) => tests.push([name, fn]);
@@ -22903,6 +23067,56 @@ test("getCategories GETs the categories endpoint", async () => {
   assertEqual(lastCall().method, "GET");
   assertEqual(lastCall().url, `${BASE}/categories/`);
   assert(Array.isArray(data));
+});
+test("createCategory POSTs to the admin category endpoint", async () => {
+  withToken();
+  queueResponses({ status: 201, body: { id: 11, name: "Cloud" } });
+  const data = await challengeService2.createCategory({
+    name: "Cloud",
+    description: "Cloud security",
+    icon: "Cloud",
+    color: "#3DD9D0",
+    order: 10
+  });
+  assertEqual(lastCall().method, "POST");
+  assertEqual(lastCall().url, `${BASE}/admin/categories/`);
+  assertEqual(lastCall().body.name, "Cloud");
+  assertEqual(lastCall().headers.Authorization, "Bearer tok123");
+  assertEqual(data.id, 11);
+});
+test("updateCategory PATCHes the category detail endpoint", async () => {
+  withToken();
+  queueResponses({ status: 200, body: { id: 11, name: "Cloud Native" } });
+  await challengeService2.updateCategory(11, { name: "Cloud Native" });
+  assertEqual(lastCall().method, "PATCH");
+  assertEqual(lastCall().url, `${BASE}/admin/categories/11/`);
+  assertEqual(lastCall().body.name, "Cloud Native");
+});
+test("deleteCategory DELETEs the category detail endpoint", async () => {
+  withToken();
+  queueResponses({ status: 204, body: null });
+  const data = await challengeService2.deleteCategory(11);
+  assertEqual(lastCall().method, "DELETE");
+  assertEqual(lastCall().url, `${BASE}/admin/categories/11/`);
+  assertEqual(data, null);
+});
+test("a refused category delete surfaces the backend explanation", async () => {
+  withToken();
+  queueResponses({
+    status: 400,
+    body: { detail: 'Cannot delete "Web" because 2 challenge(s) still use this category.' }
+  });
+  let err;
+  try {
+    await challengeService2.deleteCategory(1);
+  } catch (e) {
+    err = e;
+  }
+  assertEqual(err.status, 400);
+  assertEqual(
+    err.message,
+    'Cannot delete "Web" because 2 challenge(s) still use this category.'
+  );
 });
 test("getAllChallenges GETs the admin list endpoint", async () => {
   withToken();
@@ -24039,6 +24253,75 @@ test("an ordinary user is rejected from the admin list (403)", async () => {
   }
   assertEqual(err.status, 403);
 });
+test("category drafts prefill the real response and never carry a slug", () => {
+  const draft = categoryToDraft2({
+    id: 4,
+    name: "Forensics",
+    description: "Disk and memory",
+    icon: "Search",
+    color: "#FFAA00",
+    order: 3,
+    slug: "forensics",
+    count: 2
+  });
+  assertEqual(JSON.stringify(draft), JSON.stringify({
+    name: "Forensics",
+    description: "Disk and memory",
+    icon: "Search",
+    color: "#FFAA00",
+    order: 3
+  }));
+  const payload = buildCategoryPayload2({
+    ...draft,
+    name: "  Forensics  ",
+    description: "  Disk and memory  ",
+    order: "3"
+  });
+  assertEqual(payload.name, "Forensics");
+  assertEqual(payload.description, "Disk and memory");
+  assertEqual(payload.order, 3);
+  assertEqual(payload.slug, void 0);
+});
+test("empty category drafts build a safe order value", () => {
+  assertEqual(EMPTY_CATEGORY_DRAFT2.name, "");
+  const payload = buildCategoryPayload2(EMPTY_CATEGORY_DRAFT2);
+  assertEqual(payload.order, 0);
+  assertEqual(validateCategoryDraft2(EMPTY_CATEGORY_DRAFT2).name, "Enter a category name.");
+});
+test("category validation reports field-level limits without an API call", () => {
+  const errors = validateCategoryDraft2({
+    name: "x".repeat(101),
+    description: "",
+    icon: "i".repeat(61),
+    color: "c".repeat(21),
+    order: -1
+  });
+  assertEqual(errors.name, "Use 100 characters or fewer.");
+  assertEqual(errors.icon, "Use 60 characters or fewer.");
+  assertEqual(errors.color, "Use 20 characters or fewer.");
+  assertEqual(errors.order, "Enter a whole number of 0 or more.");
+  assertEqual(
+    JSON.stringify(validateCategoryDraft2({
+      name: "Cloud",
+      description: "",
+      icon: "",
+      color: "",
+      order: 0
+    })),
+    "{}"
+  );
+});
+test("DRF category field errors are extracted for the matching controls", () => {
+  const fields = categoryFieldErrors2({
+    name: ["A category with this name already exists."],
+    order: ["Ensure this value is greater than or equal to 0."],
+    detail: "Not a field error"
+  });
+  assertEqual(fields.name, "A category with this name already exists.");
+  assertEqual(fields.order, "Ensure this value is greater than or equal to 0.");
+  assertEqual(fields.detail, void 0);
+  assertEqual(JSON.stringify(categoryFieldErrors2(null)), "{}");
+});
 test("the criteria vocabulary exposes exactly the four supported types", () => {
   assertEqual(CRITERIA_TYPES2.length, 4);
   const values = CRITERIA_TYPES2.map((t) => t.value).sort();
@@ -24052,6 +24335,83 @@ test("describeRule summarises every supported rule, with real names", () => {
   assertEqual(describeRule2("total_solves", { target: 1 }, lookups), "Solve 1 challenge");
   assertEqual(describeRule2("category_solves", { category: 1, target: 5 }, lookups), "Solve 5 in Web Exploitation");
   assertEqual(describeRule2("challenge_solved", { challenge: 7 }, lookups), 'Solve "SQLi 101"');
+});
+var INSTANCE_PAYLOAD = {
+  id: 11,
+  challenge_id: 7,
+  challenge_title: "Example",
+  status: "running",
+  expires_at: "2099-01-01T00:10:00Z",
+  remaining_seconds: 600,
+  created_at: "2099-01-01T00:00:00Z",
+  stopped_at: null,
+  connection_meta: {
+    type: "http",
+    host: "127.0.0.1",
+    port: 45001,
+    target: "127.0.0.1:45001",
+    url: "http://127.0.0.1:45001"
+  },
+  failure_reason: ""
+};
+test("startInstance POSTs to the real start endpoint and normalises the response", async () => {
+  withToken();
+  queueResponses({ status: 201, body: INSTANCE_PAYLOAD });
+  const inst = await challengeService2.startInstance(7);
+  assertEqual(lastCall().method, "POST");
+  assertEqual(lastCall().url, `${BASE}/challenges/7/instances/start/`);
+  assertEqual(lastCall().body && Object.keys(lastCall().body).length, 0);
+  assertEqual(inst.id, 11);
+  assertEqual(inst.status, "running");
+  assertEqual(inst.command, "http://127.0.0.1:45001");
+  assertEqual(inst.connection.port, 45001);
+  assertEqual(inst.remainingSeconds, 600);
+});
+test("getInstance GETs the active endpoint and returns null on 204", async () => {
+  withToken();
+  queueResponses({ status: 204, body: null });
+  const inst = await challengeService2.getInstance(7);
+  assertEqual(lastCall().method, "GET");
+  assertEqual(lastCall().url, `${BASE}/challenges/instances/active/`);
+  assertEqual(inst, null);
+});
+test("getInstance ignores an active instance for another challenge", async () => {
+  withToken();
+  queueResponses({ status: 200, body: { ...INSTANCE_PAYLOAD, challenge_id: 99 } });
+  const inst = await challengeService2.getInstance(7);
+  assertEqual(inst, null);
+});
+test("stopInstance DELETEs the active endpoint and normalises the stopped row", async () => {
+  withToken();
+  queueResponses({ status: 200, body: { ...INSTANCE_PAYLOAD, status: "stopped", connection_meta: null } });
+  const inst = await challengeService2.stopInstance(7);
+  assertEqual(lastCall().method, "DELETE");
+  assertEqual(lastCall().url, `${BASE}/challenges/instances/active/`);
+  assertEqual(inst.status, "stopped");
+  assertEqual(inst.command, "");
+});
+test("startInstance surfaces the backend failure message", async () => {
+  withToken();
+  queueResponses({ status: 503, body: { detail: "Could not create challenge container", code: "INSTANCE_RUNTIME_FAILURE" } });
+  let message = "";
+  try {
+    await challengeService2.startInstance(7);
+  } catch (e) {
+    message = e.message;
+  }
+  assertEqual(message, "Could not create challenge container");
+});
+test("normalizeInstance never fabricates a command from empty metadata", () => {
+  const inst = normalizeInstance2({
+    id: 12,
+    challenge_id: 7,
+    status: "running",
+    connection_meta: null,
+    failure_reason: ""
+  });
+  assertEqual(inst.command, "");
+  assertEqual(inst.connection.url, "");
+  assertEqual(inst.remainingSeconds, 0);
 });
 var passed = 0;
 var failures = [];

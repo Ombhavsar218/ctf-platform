@@ -57,13 +57,21 @@ export default function Settings() {
 
   const [visibility, setVisibility] = useState(user?.profileVisibility || 'public');
 
-  const userType = user?.userType || null;
-  const userOnboarding = user?.onboarding || null;
+  const userType = user?.learning_mode ?? user?.learningMode ?? user?.userType ?? null;
+  const [modeBusy, setModeBusy] = useState(false);
 
-  const setUserMode = (mode) => {
-    const onboarding = userOnboarding ? { ...userOnboarding, userType: mode } : null;
-    updateUser({ userType: mode, onboarding });
-    toast.success(`Switched to ${mode === 'student' ? 'Student' : 'Competitor'} mode.`);
+  const setUserMode = async (mode) => {
+    if (modeBusy || !mode || mode === userType) return;
+    setModeBusy(true);
+    try {
+      const updated = await authService.updatePreferences({ learningMode: mode });
+      updateUser(updated);
+      toast.success(`Switched to ${mode === 'student' ? 'Student' : 'Competitor'} mode.`);
+    } catch (err) {
+      toast.error(err?.message || 'Could not update learning mode.');
+    } finally {
+      setModeBusy(false);
+    }
   };
 
   const [busy, setBusy] = useState(null); // 'profile' | 'security' | 'notif'
@@ -289,6 +297,57 @@ export default function Settings() {
                 <button className="btn btn-primary d-flex align-items-center gap-2" onClick={saveProfile} disabled={busy === 'profile'} style={{ minWidth: 120 }}>
                   {busy === 'profile' ? <span className="spinner-border spinner-border-sm" /> : <Save size={14} />} Save Changes
                 </button>
+              </Section>
+
+              <Section title="Learning Mode">
+                <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: 16 }}>
+                  Choose how challenge content is presented. Your selection is saved to your account.
+                </p>
+                <div style={{ display: 'flex', gap: 12, flexWrap: 'wrap' }}>
+                  <button
+                    type="button"
+                    onClick={() => setUserMode('student')}
+                    disabled={modeBusy}
+                    style={{
+                      flex: '1 1 220px',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '14px 16px', borderRadius: 10, cursor: modeBusy ? 'wait' : 'pointer',
+                      border: `1px solid ${userType === 'student' ? 'rgba(61,221,208,0.45)' : 'var(--border-color)'}`,
+                      background: userType === 'student' ? 'rgba(61,221,208,0.08)' : 'var(--bg-elevated)',
+                      color: 'var(--text-primary)', textAlign: 'left',
+                    }}
+                  >
+                    <GraduationCap size={18} color={userType === 'student' ? 'var(--accent-cyan)' : 'var(--text-muted)'} />
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Student Mode</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Guided learning content when available.</div>
+                    </div>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setUserMode('competitor')}
+                    disabled={modeBusy}
+                    style={{
+                      flex: '1 1 220px',
+                      display: 'flex', alignItems: 'center', gap: 12,
+                      padding: '14px 16px', borderRadius: 10, cursor: modeBusy ? 'wait' : 'pointer',
+                      border: `1px solid ${userType === 'competitor' ? 'rgba(139,92,246,0.45)' : 'var(--border-color)'}`,
+                      background: userType === 'competitor' ? 'rgba(139,92,246,0.08)' : 'var(--bg-elevated)',
+                      color: 'var(--text-primary)', textAlign: 'left',
+                    }}
+                  >
+                    <Swords size={18} color={userType === 'competitor' ? 'var(--accent-purple)' : 'var(--text-muted)'} />
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: '0.9rem' }}>Competitor Mode</div>
+                      <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)' }}>Independent challenge content when available.</div>
+                    </div>
+                  </button>
+                </div>
+                {modeBusy && (
+                  <div style={{ marginTop: 12, fontSize: '0.8rem', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)' }}>
+                    Saving learning mode...
+                  </div>
+                )}
               </Section>
             </div>
           )}

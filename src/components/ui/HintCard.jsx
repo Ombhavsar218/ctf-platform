@@ -3,7 +3,7 @@ import { Lock, Unlock, ChevronDown, ChevronUp, Lightbulb, XCircle } from 'lucide
 import { challengeService } from '../../services/challengeService';
 import { useApp } from '../../context/AppContext';
 
-export default function HintCard({ hint, challengeId, index, onUnlocked }) {
+export default function HintCard({ hint, challengeId, index, onUnlocked, progressionLocked = false }) {
   const { user, isAuthenticated, updateUser, refreshStats } = useApp();
   // Seed from the server payload so previously-unlocked hints survive a reload;
   // the server only ever sends text for hints this user has unlocked.
@@ -23,7 +23,7 @@ export default function HintCard({ hint, challengeId, index, onUnlocked }) {
 
   const handleReveal = async (e) => {
     e.stopPropagation();
-    if (loading || revealed) return;
+    if (loading || revealed || progressionLocked) return;
     setLoading(true);
     setError('');
     try {
@@ -65,7 +65,11 @@ export default function HintCard({ hint, challengeId, index, onUnlocked }) {
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           {!revealed ? (
-            isAuthenticated ? (
+            progressionLocked ? (
+              <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                Unlock previous hint first
+              </span>
+            ) : isAuthenticated ? (
               <button
                 className="btn btn-sm"
                 style={{
@@ -74,7 +78,7 @@ export default function HintCard({ hint, challengeId, index, onUnlocked }) {
                   borderRadius: 6,
                 }}
                 onClick={handleReveal}
-                disabled={loading}
+                disabled={loading || progressionLocked}
               >
                 {loading ? 'Revealing...' : `Reveal (-${hint.cost} pts)`}
               </button>

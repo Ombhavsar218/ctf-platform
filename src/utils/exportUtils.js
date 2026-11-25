@@ -105,18 +105,108 @@ export async function downloadPdf({ filename, title, subtitle, columns, rows, or
   doc.save(filename);
 }
 
+const MAX_EXCEL_BYTES = 5 * 1024 * 1024; // 5 MB
+const MAX_EXCEL_SHEETS = 10;
+const MAX_EXCEL_ROWS = 10000;
+const MAX_EXCEL_COLUMNS = 200;
+const EXCEL_MIME_TYPES = new Set([
+  '',
+  'application/octet-stream',
+  'application/vnd.ms-excel',
+  'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+  'application/zip',
+]);
+
 /**
  * Parse an Excel (.xlsx / .xls) File into a list of sheets.
  * Each sheet: { name, rows } where rows is an array of plain objects.
+ *
+ * This helper is not currently wired to any admin upload flow. It still treats
+ * the file as untrusted: extension/MIME/size are checked before reading, the
+ * parser is told not to evaluate formulas or macros, and workbook dimensions
+ * are capped before rows are materialised.
  */
 export async function parseExcelFile(file) {
+  if (!file) {
+    throw new Error('No file provided.');
+  }
+  const name = (file.name || '').toLowerCase();
+  if (!name.endsWith('.xlsx') && !name.endsWith('.xls')) {
+    throw new Error('Only .xlsx or .xls files are allowed.');
+  }
+  if (file.type && !EXCEL_MIME_TYPES.has(String(file.type).toLowerCase())) {
+    throw new Error('The selected file is not an Excel workbook.');
+  }
+  if (!file.size) {
+    throw new Error('The selected file is empty.');
+  }
+  if (file.size > MAX_EXCEL_BYTES) {
+    throw new Error('File is too large. Maximum size is 5 MB.');
+  }
   const XLSX = await import('xlsx');
   const buf = await file.arrayBuffer();
-  const wb = XLSX.read(buf, { type: 'array' });
-  return wb.SheetNames.map(name => ({
-    name,
-    rows: XLSX.utils.sheet_to_json(wb.Sheets[name]),
-  }));
+  const bytes = new Uint8Array(buf);
+  const isXlsx = name.endsWith('.xlsx');
+  const zipMagic = bytes[0] === 0x50 && bytes[1] === 0x4b
+    && (bytes[2] === 0x03 || bytes[2] === 0x05 || bytes[2] === 0x07)
+    && (bytes[3] === 0x04 || bytes[3] === 0x06 || bytes[3] === 0x08);
+  const oleMagic = bytes.length >= 8
+    && bytes[0] === 0xd0 && bytes[1] === 0xcf && bytes[2] === 0x11
+    && bytes[3] === 0xe0 && bytes[4] === 0xa1 && bytes[5] === 0xb1
+    && bytes[6] === 0x1a && bytes[7] === 0xe1;
+  if ((isXlsx && !zipMagic) || (!isXlsx && !oleMagic)) {
+    throw new Error('Unable to parse Excel file. The file may be corrupted.');
+  }
+  let wb;
+  try {
+    wb = XLSX.read(buf, {
+      type: 'array',
+      cellFormula: false,
+      cellHTML: false,
+      cellNF: false,
+      cellStyles: false,
+      sheetRows: MAX_EXCEL_ROWS + 1,
+    });
+  } catch {
+    throw new Error('Unable to parse Excel file. The file may be corrupted.');
+  }
+  if (!wb.SheetNames || wb.SheetNames.length === 0) {
+    throw new Error('Workbook contains no sheets.');
+  }
+  if (wb.SheetNames.length > MAX_EXCEL_SHEETS) {
+    throw new Error('Too many sheets in workbook.');
+  }
+  return wb.SheetNames.slice(0, MAX_EXCEL_SHEETS).map((sheetName) => {
+    const sheet = wb.Sheets[sheetName];
+    let rows = [];
+    try {
+      const ref = sheet && sheet['!ref'];
+      if (ref) {
+        const range = XLSX.utils.decode_range(ref);
+        const rowCount = range.e.r - range.s.r + 1;
+        const columnCount = range.e.c - range.s.c + 1;
+        if (rowCount > MAX_EXCEL_ROWS) {
+          throw new Error(`Sheet "${sheetName}" exceeds the maximum row limit.`);
+        }
+        if (columnCount > MAX_EXCEL_COLUMNS) {
+          throw new Error(`Sheet "${sheetName}" exceeds the maximum column limit.`);
+        }
+      }
+      rows = XLSX.utils.sheet_to_json(sheet);
+    } catch (error) {
+      if (error instanceof Error && error.message.startsWith('Sheet "')) {
+        throw error;
+      }
+      throw new Error(`Unable to read sheet "${sheetName}".`);
+    }
+    if (Array.isArray(rows) && rows.length > MAX_EXCEL_ROWS) {
+      throw new Error(`Sheet "${sheetName}" exceeds the maximum row limit.`);
+    }
+    return {
+      name: sheetName,
+      rows: Array.isArray(rows) ? rows : [],
+    };
+  });
 }
 
 export function todayStamp() {

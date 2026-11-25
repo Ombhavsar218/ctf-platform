@@ -6,11 +6,14 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
-    "preview": "vite preview"
+    "preview": "vite preview",
+    "test": "vitest run"
   },
   "dependencies": {
     "@react-three/drei": "^9.114.3",
     "@react-three/fiber": "^8.17.10",
+    "@xterm/addon-fit": "^0.10.0",
+    "@xterm/xterm": "^5.5.0",
     "bootstrap": "^5.3.3",
     "framer-motion": "^11.11.10",
     "jspdf": "^4.2.1",
@@ -24,10 +27,16 @@
     "xlsx": "^0.18.5"
   },
   "devDependencies": {
+    "@testing-library/react": "^16.3.3",
     "@vitejs/plugin-react": "^4.3.1",
-    "vite": "^5.4.8"
+    "jsdom": "^25.0.1",
+    "vite": "^5.4.8",
+    "vitest": "^2.1.9"
   },
   "allowScripts": {
     "esbuild@0.21.5": true
+  },
+  "overrides": {
+    "dompurify": "3.4.17"
   }
 }

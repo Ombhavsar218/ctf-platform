@@ -1,9 +1,11 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { useSearchParams } from 'react-router-dom';
+import { toast } from 'react-toastify';
 import { Flag, GraduationCap, Swords, AlertTriangle } from 'lucide-react';
 import ChallengeCard from '../components/ui/ChallengeCard';
 import ChallengeFilter from '../components/ui/ChallengeFilter';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
+import { authService } from '../services/authService';
 import { challengeService } from '../services/challengeService';
 import { useApp } from '../context/AppContext';
 import { resolveFocusAreas } from '../utils/focusAreas';
@@ -24,7 +26,8 @@ export default function Challenges() {
     sort: 'default',
   });
 
-  const userType = user?.userType;
+  const userType = user?.learning_mode ?? user?.learningMode ?? user?.userType ?? null;
+  const [modeBusy, setModeBusy] = useState(false);
   // Stable reference (shared empty array when the account has no preferences),
   // so `focusAreas` below does not change identity on every render.
   const focusAreas = resolveFocusAreas(user);
@@ -98,8 +101,17 @@ export default function Challenges() {
   }, {});
   const hasGroups = filters.sort === 'default' && !filters.search && Object.keys(grouped).length > 0;
 
-  const switchMode = (mode) => {
-    updateUser({ userType: mode });
+  const switchMode = async (mode) => {
+    if (modeBusy || !mode || mode === userType) return;
+    setModeBusy(true);
+    try {
+      const updated = await authService.updatePreferences({ learningMode: mode });
+      updateUser(updated);
+    } catch (e) {
+      toast.error(e?.message || 'Could not update learning mode.');
+    } finally {
+      setModeBusy(false);
+    }
   };
 
   if (loading && allChallenges.length === 0) {
@@ -150,28 +162,32 @@ export default function Challenges() {
         <div style={{ display: 'inline-flex', gap: 8, background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 10, padding: 4, marginTop: 20 }}>
           <button
             onClick={() => switchMode('student')}
+            disabled={modeBusy}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
               padding: '8px 18px', borderRadius: 7,
-              border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+              border: 'none', cursor: modeBusy ? 'wait' : 'pointer', fontSize: '0.85rem', fontWeight: 600,
               fontFamily: 'var(--font-mono)',
               background: userType === 'student' ? 'rgba(61,221,208,0.12)' : 'transparent',
               color: userType === 'student' ? 'var(--accent-cyan)' : 'var(--text-muted)',
               transition: 'all 0.2s ease',
+              opacity: modeBusy ? 0.7 : 1,
             }}
           >
             <GraduationCap size={15} /> Student Mode
           </button>
           <button
             onClick={() => switchMode('competitor')}
+            disabled={modeBusy}
             style={{
               display: 'inline-flex', alignItems: 'center', gap: 8,
               padding: '8px 18px', borderRadius: 7,
-              border: 'none', cursor: 'pointer', fontSize: '0.85rem', fontWeight: 600,
+              border: 'none', cursor: modeBusy ? 'wait' : 'pointer', fontSize: '0.85rem', fontWeight: 600,
               fontFamily: 'var(--font-mono)',
               background: userType === 'competitor' ? 'rgba(139,92,246,0.12)' : 'transparent',
               color: userType === 'competitor' ? 'var(--accent-purple)' : 'var(--text-muted)',
               transition: 'all 0.2s ease',
+              opacity: modeBusy ? 0.7 : 1,
             }}
           >
             <Swords size={15} /> Competitor Mode

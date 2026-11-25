@@ -37,7 +37,7 @@ const USER_KEY = 'cyberforge_user';
  * this function also runs over the locally cached user, so a hardcoded value
  * would silently overwrite fields the user just edited.
  */
-function normaliseUser(raw) {
+export function normaliseUser(raw) {
   if (!raw) return null;
 
   return {
@@ -75,12 +75,19 @@ function normaliseUser(raw) {
     notifPrefs: raw.notifPrefs ?? raw.notification_prefs ?? {},
     profileVisibility: raw.profileVisibility ?? raw.profile_visibility ?? 'public',
 
+    // Backend-authoritative learning mode (student/competitor). `userType` is a
+    // backward-compatible alias derived from learning_mode for existing consumers.
+    // Never infer persisted mode from localStorage; /auth/me/ and preferences
+    // responses are the authoritative sources.
+    learningMode: raw.learning_mode ?? raw.learningMode ?? raw.userType ?? raw.onboarding?.userType ?? null,
+    learning_mode: raw.learning_mode ?? raw.learningMode ?? raw.userType ?? raw.onboarding?.userType ?? null,
+    userType: raw.learning_mode ?? raw.learningMode ?? raw.userType ?? raw.onboarding?.userType ?? null,
+
     // Frontend-only fields, defaulted but never overwritten.
     streak: raw.streak ?? 0,
     rank: raw.rank ?? null,
     solvedChallenges: raw.solvedChallenges ?? [],
     badges: raw.badges ?? [],
-    userType: raw.userType ?? raw.onboarding?.userType ?? null,
     categoryStats: raw.categoryStats ?? {},
     weeklyProgress: raw.weeklyProgress ?? [],
     monthlyProgress: raw.monthlyProgress ?? [],
@@ -113,6 +120,10 @@ function applyServerUser(data) {
   // object also carries the previous derived alias. Drop it before merging so
   // the stale copy cannot shadow the value the API just returned.
   delete cached.displayName;
+  // Keep backward-compatible alias in sync with authoritative learning mode.
+  delete cached.userType;
+  delete cached.learningMode;
+  delete cached.learning_mode;
   const updated = normaliseUser({ ...cached, ...data });
   localStorage.setItem(USER_KEY, JSON.stringify(updated));
   return updated;
@@ -235,14 +246,16 @@ export const authService = {
   },
 
   /**
-   * Persist account preferences (notification flags and/or profile
-   * visibility) via PATCH /auth/me/preferences/. Only the fields provided are
+   * Persist account preferences (notification flags, profile visibility, and/or
+   * learning mode) via PATCH /auth/me/preferences/. Only provided fields are
    * sent; the API echoes the canonical user, which is merged into the cache.
    */
-  async updatePreferences({ notificationPrefs, profileVisibility } = {}) {
+  async updatePreferences({ notificationPrefs, profileVisibility, learningMode, learning_mode } = {}) {
     const payload = {};
     if (notificationPrefs !== undefined) payload.notification_prefs = notificationPrefs;
     if (profileVisibility !== undefined) payload.profile_visibility = profileVisibility;
+    const mode = learning_mode ?? learningMode;
+    if (mode !== undefined) payload.learning_mode = mode;
 
     const data = await api.patch('/auth/me/preferences/', payload);
     return applyServerUser(data);

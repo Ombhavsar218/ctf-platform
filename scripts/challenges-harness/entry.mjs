@@ -73,7 +73,7 @@ globalThis.fetch = fetchStub;
 /* Import the real modules (after globals exist)                       */
 /* ------------------------------------------------------------------ */
 
-const { challengeService } = await import('../../src/services/challengeService.js');
+const { challengeService, normalizeInstance } = await import('../../src/services/challengeService.js');
 const { leaderboardService } = await import('../../src/services/leaderboardService.js');
 const { statsService } = await import('../../src/services/statsService.js');
 const { authService } = await import('../../src/services/authService.js');
@@ -85,6 +85,13 @@ const {
 const { api, tokenStore, ApiError } = await import('../../src/services/api.js');
 const { resolveFocusAreas, EMPTY_FOCUS_AREAS } = await import('../../src/utils/focusAreas.js');
 const { activityKey } = await import('../../src/utils/activity.js');
+const {
+  EMPTY_CATEGORY_DRAFT,
+  categoryToDraft,
+  buildCategoryPayload,
+  validateCategoryDraft,
+  categoryFieldErrors,
+} = await import('../../src/utils/categoryForm.js');
 
 const BASE = 'https://api.example.test/api/v1';
 
@@ -175,6 +182,60 @@ test('getCategories GETs the categories endpoint', async () => {
   assertEqual(lastCall().method, 'GET');
   assertEqual(lastCall().url, `${BASE}/categories/`);
   assert(Array.isArray(data));
+});
+
+test('createCategory POSTs to the admin category endpoint', async () => {
+  withToken();
+  queueResponses({ status: 201, body: { id: 11, name: 'Cloud' } });
+  const data = await challengeService.createCategory({
+    name: 'Cloud',
+    description: 'Cloud security',
+    icon: 'Cloud',
+    color: '#3DD9D0',
+    order: 10,
+  });
+  assertEqual(lastCall().method, 'POST');
+  assertEqual(lastCall().url, `${BASE}/admin/categories/`);
+  assertEqual(lastCall().body.name, 'Cloud');
+  assertEqual(lastCall().headers.Authorization, 'Bearer tok123');
+  assertEqual(data.id, 11);
+});
+
+test('updateCategory PATCHes the category detail endpoint', async () => {
+  withToken();
+  queueResponses({ status: 200, body: { id: 11, name: 'Cloud Native' } });
+  await challengeService.updateCategory(11, { name: 'Cloud Native' });
+  assertEqual(lastCall().method, 'PATCH');
+  assertEqual(lastCall().url, `${BASE}/admin/categories/11/`);
+  assertEqual(lastCall().body.name, 'Cloud Native');
+});
+
+test('deleteCategory DELETEs the category detail endpoint', async () => {
+  withToken();
+  queueResponses({ status: 204, body: null });
+  const data = await challengeService.deleteCategory(11);
+  assertEqual(lastCall().method, 'DELETE');
+  assertEqual(lastCall().url, `${BASE}/admin/categories/11/`);
+  assertEqual(data, null);
+});
+
+test('a refused category delete surfaces the backend explanation', async () => {
+  withToken();
+  queueResponses({
+    status: 400,
+    body: { detail: 'Cannot delete "Web" because 2 challenge(s) still use this category.' },
+  });
+  let err;
+  try {
+    await challengeService.deleteCategory(1);
+  } catch (e) {
+    err = e;
+  }
+  assertEqual(err.status, 400);
+  assertEqual(
+    err.message,
+    'Cannot delete "Web" because 2 challenge(s) still use this category.',
+  );
 });
 
 test('getAllChallenges GETs the admin list endpoint', async () => {
@@ -1311,6 +1372,80 @@ test('an ordinary user is rejected from the admin list (403)', async () => {
   assertEqual(err.status, 403);
 });
 
+test('category drafts prefill the real response and never carry a slug', () => {
+  const draft = categoryToDraft({
+    id: 4,
+    name: 'Forensics',
+    description: 'Disk and memory',
+    icon: 'Search',
+    color: '#FFAA00',
+    order: 3,
+    slug: 'forensics',
+    count: 2,
+  });
+  assertEqual(JSON.stringify(draft), JSON.stringify({
+    name: 'Forensics',
+    description: 'Disk and memory',
+    icon: 'Search',
+    color: '#FFAA00',
+    order: 3,
+  }));
+  const payload = buildCategoryPayload({
+    ...draft,
+    name: '  Forensics  ',
+    description: '  Disk and memory  ',
+    order: '3',
+  });
+  assertEqual(payload.name, 'Forensics');
+  assertEqual(payload.description, 'Disk and memory');
+  assertEqual(payload.order, 3);
+  assertEqual(payload.slug, undefined);
+});
+
+test('empty category drafts build a safe order value', () => {
+  assertEqual(EMPTY_CATEGORY_DRAFT.name, '');
+  const payload = buildCategoryPayload(EMPTY_CATEGORY_DRAFT);
+  assertEqual(payload.order, 0);
+  assertEqual(validateCategoryDraft(EMPTY_CATEGORY_DRAFT).name, 'Enter a category name.');
+});
+
+test('category validation reports field-level limits without an API call', () => {
+  const errors = validateCategoryDraft({
+    name: 'x'.repeat(101),
+    description: '',
+    icon: 'i'.repeat(61),
+    color: 'c'.repeat(21),
+    order: -1,
+  });
+  assertEqual(errors.name, 'Use 100 characters or fewer.');
+  assertEqual(errors.icon, 'Use 60 characters or fewer.');
+  assertEqual(errors.color, 'Use 20 characters or fewer.');
+  assertEqual(errors.order, 'Enter a whole number of 0 or more.');
+
+  assertEqual(
+    JSON.stringify(validateCategoryDraft({
+      name: 'Cloud',
+      description: '',
+      icon: '',
+      color: '',
+      order: 0,
+    })),
+    '{}',
+  );
+});
+
+test('DRF category field errors are extracted for the matching controls', () => {
+  const fields = categoryFieldErrors({
+    name: ['A category with this name already exists.'],
+    order: ['Ensure this value is greater than or equal to 0.'],
+    detail: 'Not a field error',
+  });
+  assertEqual(fields.name, 'A category with this name already exists.');
+  assertEqual(fields.order, 'Ensure this value is greater than or equal to 0.');
+  assertEqual(fields.detail, undefined);
+  assertEqual(JSON.stringify(categoryFieldErrors(null)), '{}');
+});
+
 test('the criteria vocabulary exposes exactly the four supported types', () => {
   assertEqual(CRITERIA_TYPES.length, 4);
   const values = CRITERIA_TYPES.map(t => t.value).sort();
@@ -1325,6 +1460,88 @@ test('describeRule summarises every supported rule, with real names', () => {
   assertEqual(describeRule('total_solves', { target: 1 }, lookups), 'Solve 1 challenge');
   assertEqual(describeRule('category_solves', { category: 1, target: 5 }, lookups), 'Solve 5 in Web Exploitation');
   assertEqual(describeRule('challenge_solved', { challenge: 7 }, lookups), 'Solve "SQLi 101"');
+});
+
+/* ------------------------------------------------------------------ */
+/* Stage 1C: real Docker-backed instance API                           */
+/* ------------------------------------------------------------------ */
+
+const INSTANCE_PAYLOAD = {
+  id: 11,
+  challenge_id: 7,
+  challenge_title: 'Example',
+  status: 'running',
+  expires_at: '2099-01-01T00:10:00Z',
+  remaining_seconds: 600,
+  created_at: '2099-01-01T00:00:00Z',
+  stopped_at: null,
+  connection_meta: {
+    type: 'http', host: '127.0.0.1', port: 45001,
+    target: '127.0.0.1:45001', url: 'http://127.0.0.1:45001',
+  },
+  failure_reason: '',
+};
+
+test('startInstance POSTs to the real start endpoint and normalises the response', async () => {
+  withToken();
+  queueResponses({ status: 201, body: INSTANCE_PAYLOAD });
+  const inst = await challengeService.startInstance(7);
+  assertEqual(lastCall().method, 'POST');
+  assertEqual(lastCall().url, `${BASE}/challenges/7/instances/start/`);
+  assertEqual(lastCall().body && Object.keys(lastCall().body).length, 0);
+  assertEqual(inst.id, 11);
+  assertEqual(inst.status, 'running');
+  assertEqual(inst.command, 'http://127.0.0.1:45001');
+  assertEqual(inst.connection.port, 45001);
+  assertEqual(inst.remainingSeconds, 600);
+});
+
+test('getInstance GETs the active endpoint and returns null on 204', async () => {
+  withToken();
+  queueResponses({ status: 204, body: null });
+  const inst = await challengeService.getInstance(7);
+  assertEqual(lastCall().method, 'GET');
+  assertEqual(lastCall().url, `${BASE}/challenges/instances/active/`);
+  assertEqual(inst, null);
+});
+
+test('getInstance ignores an active instance for another challenge', async () => {
+  withToken();
+  queueResponses({ status: 200, body: { ...INSTANCE_PAYLOAD, challenge_id: 99 } });
+  const inst = await challengeService.getInstance(7);
+  assertEqual(inst, null);
+});
+
+test('stopInstance DELETEs the active endpoint and normalises the stopped row', async () => {
+  withToken();
+  queueResponses({ status: 200, body: { ...INSTANCE_PAYLOAD, status: 'stopped', connection_meta: null } });
+  const inst = await challengeService.stopInstance(7);
+  assertEqual(lastCall().method, 'DELETE');
+  assertEqual(lastCall().url, `${BASE}/challenges/instances/active/`);
+  assertEqual(inst.status, 'stopped');
+  assertEqual(inst.command, '');
+});
+
+test('startInstance surfaces the backend failure message', async () => {
+  withToken();
+  queueResponses({ status: 503, body: { detail: 'Could not create challenge container', code: 'INSTANCE_RUNTIME_FAILURE' } });
+  let message = '';
+  try {
+    await challengeService.startInstance(7);
+  } catch (e) {
+    message = e.message;
+  }
+  assertEqual(message, 'Could not create challenge container');
+});
+
+test('normalizeInstance never fabricates a command from empty metadata', () => {
+  const inst = normalizeInstance({
+    id: 12, challenge_id: 7, status: 'running',
+    connection_meta: null, failure_reason: '',
+  });
+  assertEqual(inst.command, '');
+  assertEqual(inst.connection.url, '');
+  assertEqual(inst.remainingSeconds, 0);
 });
 
 /* ------------------------------------------------------------------ */

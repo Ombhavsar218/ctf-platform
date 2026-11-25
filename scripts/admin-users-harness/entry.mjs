@@ -63,6 +63,17 @@ globalThis.fetch = fetchStub;
 /* ------------------------------------------------------------------ */
 
 const { adminService } = await import('../../src/services/adminService.js');
+const {
+  loadPlatformSettings,
+  savePlatformSettings,
+} = await import('../../src/services/platformSettingsService.js');
+const {
+  DEFAULT_PLATFORM_SETTINGS,
+  buildPlatformSettingsPayload,
+  normalizePlatformSettings,
+  platformSettingsEqual,
+  platformSettingsFieldErrors,
+} = await import('../../src/utils/adminSettingsForm.js');
 const { api, tokenStore, ApiError } = await import('../../src/services/api.js');
 
 const BASE = 'https://api.example.test/api/v1';
@@ -279,6 +290,176 @@ test('401 with a valid refresh token retries once using the new access token', a
   assertEqual(calls[2].headers.Authorization, 'Bearer new-access');
   assertEqual(tokenStore.getAccess(), 'new-access');
   assertEqual(data.count, 1);
+});
+
+test('listAuditLogs builds the paginated audit URL', async () => {
+  queueResponses({ status: 200, body: { count: 0, next: null, previous: null, results: [] } });
+  const data = await adminService.listAuditLogs();
+  assertEqual(calls.length, 1);
+  assertEqual(lastCall().method, 'GET');
+  assertEqual(lastCall().url, `${BASE}/admin/audit-logs/?page=1&page_size=20`);
+  assertEqual(data.count, 0);
+});
+
+test('listAuditLogs forwards every server-side filter and trims blanks', async () => {
+  queueResponses({ status: 200, body: { count: 0, results: [] } });
+  await adminService.listAuditLogs({
+    page: 2,
+    pageSize: 10,
+    actor: ' admin ',
+    action: 'user.status_change',
+    targetType: 'user',
+    search: ' ada ',
+    dateFrom: '2026-10-01',
+    dateTo: '2026-10-22',
+  });
+  const url = lastCall().url;
+  assertEqual(url, `${BASE}/admin/audit-logs/?page=2&page_size=10&actor=admin&action=user.status_change&target_type=user&search=ada&date_from=2026-10-01&date_to=2026-10-22`);
+});
+
+test('listAuditLogs omits blank filters', async () => {
+  queueResponses({ status: 200, body: { count: 0, results: [] } });
+  await adminService.listAuditLogs({
+    actor: '  ', action: '', targetType: '', search: '   ', dateFrom: '', dateTo: '',
+  });
+  assertEqual(lastCall().url, `${BASE}/admin/audit-logs/?page=1&page_size=20`);
+});
+
+test('listAuditLogs 403 surfaces the permission message', async () => {
+  withToken();
+  queueResponses({ status: 403, body: null });
+  let err;
+  try { await adminService.listAuditLogs(); } catch (e) { err = e; }
+  assert(err instanceof ApiError, 'expected an ApiError');
+  assertEqual(err.status, 403);
+  assert(/permission/i.test(err.message), `unexpected message: ${err.message}`);
+});
+
+test('getPlatformSettings GETs the admin settings endpoint', async () => {
+  withToken();
+  queueResponses({
+    status: 200,
+    body: { allow_registration: true, public_leaderboard: true, allow_hints: true },
+  });
+  const data = await adminService.getPlatformSettings();
+  assertEqual(lastCall().method, 'GET');
+  assertEqual(lastCall().url, `${BASE}/admin/settings/`);
+  assertEqual(lastCall().headers.Authorization, 'Bearer tok123');
+  assertEqual(data.allow_hints, true);
+});
+
+test('updatePlatformSettings PATCHes only the three supported fields', async () => {
+  queueResponses({ status: 200, body: { allow_hints: false } });
+  await adminService.updatePlatformSettings({ allow_hints: false });
+  assertEqual(lastCall().method, 'PATCH');
+  assertEqual(lastCall().url, `${BASE}/admin/settings/`);
+  assertEqual(lastCall().headers['Content-Type'], 'application/json');
+  assertEqual(lastCall().body.allow_hints, false);
+});
+
+test('platform settings normalize missing optional fields to safe defaults', () => {
+  assertEqual(JSON.stringify(normalizePlatformSettings({})), JSON.stringify(DEFAULT_PLATFORM_SETTINGS));
+  const partial = normalizePlatformSettings({ allow_hints: false });
+  assertEqual(partial.allow_hints, false);
+  assertEqual(partial.allow_registration, true);
+  assertEqual(partial.public_leaderboard, true);
+});
+
+test('platform settings payload contains only approved fields', () => {
+  const payload = buildPlatformSettingsPayload({
+    allow_registration: false,
+    public_leaderboard: true,
+    allow_hints: false,
+    debug: true,
+    secret: 'must-not-be-sent',
+  });
+  assertEqual(JSON.stringify(Object.keys(payload).sort()), JSON.stringify([
+    'allow_hints', 'allow_registration', 'public_leaderboard',
+  ]));
+  assertEqual(payload.allow_registration, false);
+  assertEqual(payload.allow_hints, false);
+});
+
+test('platform settings equality ignores unrelated fields', () => {
+  assert(platformSettingsEqual(
+    { allow_registration: true, public_leaderboard: true, allow_hints: true, extra: 1 },
+    { allow_registration: true, public_leaderboard: true, allow_hints: true },
+  ), 'expected equal settings');
+  assert(!platformSettingsEqual(
+    { allow_registration: true, public_leaderboard: true, allow_hints: true },
+    { allow_registration: true, public_leaderboard: false, allow_hints: true },
+  ), 'expected different settings');
+});
+
+test('platform settings field errors are limited to approved fields', () => {
+  const errors = platformSettingsFieldErrors({
+    data: {
+      allow_hints: ['Must be a boolean.'],
+      debug: ['Do not display.'],
+    },
+  });
+  assertEqual(errors.allow_hints, 'Must be a boolean.');
+  assertEqual(errors.debug, undefined);
+});
+
+test('loadPlatformSettings reads and normalizes the API response', async () => {
+  queueResponses({
+    status: 200,
+    body: { allow_registration: false, allow_hints: false },
+  });
+  const settings = await loadPlatformSettings();
+  assertEqual(calls.length, 1);
+  assertEqual(settings.allow_registration, false);
+  assertEqual(settings.allow_hints, false);
+  assertEqual(settings.public_leaderboard, true);
+});
+
+test('savePlatformSettings PATCHes then re-reads before resolving', async () => {
+  withToken();
+  const stored = {
+    allow_registration: false,
+    public_leaderboard: true,
+    allow_hints: false,
+  };
+  queueResponses(
+    { status: 200, body: stored },
+    { status: 200, body: stored },
+  );
+  const confirmed = await savePlatformSettings(stored);
+  assertEqual(calls.length, 2, 'PATCH and verification GET');
+  assertEqual(calls[0].method, 'PATCH');
+  assertEqual(calls[1].method, 'GET');
+  assertEqual(calls[0].body.allow_registration, false);
+  assertEqual(confirmed.allow_hints, false);
+});
+
+test('savePlatformSettings rejects when the verification read disagrees', async () => {
+  queueResponses(
+    { status: 200, body: { allow_hints: true } },
+    { status: 200, body: { allow_hints: false } },
+  );
+  let err;
+  try {
+    await savePlatformSettings({ allow_hints: true });
+  } catch (e) {
+    err = e;
+  }
+  assert(Boolean(err), 'expected a verification error');
+  assert(/verif/i.test(err.message), `unexpected message: ${err.message}`);
+  assertEqual(calls.length, 2);
+});
+
+test('savePlatformSettings does not re-read after a PATCH error', async () => {
+  queueResponses({ status: 400, body: { allow_hints: ['Must be a boolean.'] } });
+  let err;
+  try {
+    await savePlatformSettings({ allow_hints: true });
+  } catch (e) {
+    err = e;
+  }
+  assert(err instanceof ApiError, 'expected an ApiError');
+  assertEqual(err.status, 400);
+  assertEqual(calls.length, 1, 'must not verify a failed PATCH');
 });
 
 /* ------------------------------------------------------------------ */

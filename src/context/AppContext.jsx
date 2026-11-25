@@ -8,6 +8,20 @@ const AppContext = createContext(null);
 const USER_KEY = 'cyberforge_user';
 
 /**
+ * The API reports the daily solve streaks twice: as `current_streak` /
+ * `longest_streak` and as the `currentStreak` / `longestStreak` aliases that
+ * match the camelCase convention of the rest of the payload. Normalising once
+ * here means every consumer reads the same two fields regardless of which
+ * spelling the server sent.
+ */
+function normaliseStats(data) {
+  if (!data) return data;
+  const current = data.current_streak ?? data.currentStreak ?? 0;
+  const longest = data.longest_streak ?? data.longestStreak ?? 0;
+  return { ...data, current_streak: current, longest_streak: longest };
+}
+
+/**
  * Translate the stats payload into the field names the existing UI already
  * reads off `user` (rank, solvedChallenges, categoryStats, progress arrays,
  * recentActivity). This keeps every consumer - Dashboard, Profile, Sidebar,
@@ -36,6 +50,12 @@ function statsToUserFields(stats) {
     weeklyProgress: stats.progress?.weekly ?? [],
     monthlyProgress: stats.progress?.monthly ?? [],
     joinDate: stats.joinDate ?? null,
+    // Server-derived daily solve streaks (snake_case on the wire, camelCase
+    // here). `streak` is the historical field name the PowerShell console and
+    // the Settings preview already read; it is the very same current streak.
+    streak: stats.current_streak ?? 0,
+    currentStreak: stats.current_streak ?? 0,
+    longestStreak: stats.longest_streak ?? 0,
   };
 }
 
@@ -72,20 +92,28 @@ export function AppProvider({ children }) {
    * Load the current user's statistics and fold them into the user object.
    * One request per authenticated session; the pages read the derived fields
    * without each re-fetching the leaderboard or recomputing anything.
+   *
+   * The request carries the session epoch: if the session changed while it
+   * was in flight (logout, account switch, expiry) the result is discarded, so
+   * one account's statistics - including its streaks - can never land in
+   * another account's state.
    */
   const loadStats = useCallback(async () => {
+    const epoch = sessionRef.current;
     setStatsLoading(true);
     setStatsError(null);
     try {
-      const data = await statsService.getMyStats();
+      const data = normaliseStats(await statsService.getMyStats());
+      if (epoch !== sessionRef.current) return null;
       setStats(data);
       updateUser(statsToUserFields(data));
       return data;
     } catch (err) {
+      if (epoch !== sessionRef.current) return null;
       setStatsError(err?.message || 'Could not load your statistics.');
       return null;
     } finally {
-      setStatsLoading(false);
+      if (epoch === sessionRef.current) setStatsLoading(false);
     }
   }, [updateUser]);
 
@@ -221,6 +249,9 @@ export function AppProvider({ children }) {
     setNotifications([]);
     setUnreadCount(0);
     setNotificationsError(null);
+    // Drop the previous account's statistics (points, rank, streaks, ...) so
+    // they can never be shown against the new account.
+    clearStats();
     loadNotifications();
     loadStats();
     return u;
@@ -234,6 +265,7 @@ export function AppProvider({ children }) {
     setNotifications([]);
     setUnreadCount(0);
     setNotificationsError(null);
+    clearStats();
     loadNotifications();
     loadStats();
     return u;

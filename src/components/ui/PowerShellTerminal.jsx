@@ -55,7 +55,7 @@ export default function PowerShellTerminal({ onClose }) {
 
       case 'whoami':
         push('info', user?.username || 'guest');
-        push('out', `${user?.email || ''} · role: ${user?.role || 'user'} · mode: ${user?.userType || '—'}`);
+        push('out', `${user?.email || ''} · role: ${user?.role || 'user'} · mode: ${user?.learning_mode ?? user?.learningMode ?? user?.userType ?? '—'}`);
         break;
 
       case 'points':

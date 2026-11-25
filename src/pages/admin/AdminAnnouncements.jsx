@@ -2,8 +2,6 @@ import React, { useEffect, useState } from 'react';
 import { Megaphone, Plus, Info, AlertTriangle, Wrench, Trash2, Edit, Eye, EyeOff, X, RotateCcw } from 'lucide-react';
 import { toast } from 'react-toastify';
 import { announcementService } from '../../services/announcementService';
-import { adminService } from '../../services/adminService';
-import { useApp } from '../../context/AppContext';
 import Modal from '../../components/ui/Modal';
 
 const PRIORITY_STYLES = {
@@ -18,7 +16,6 @@ const EMPTY_DRAFT = {
 };
 
 export default function AdminAnnouncements() {
-  const { user: currentUser } = useApp();
   const [announcements, setAnnouncements] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -77,7 +74,6 @@ export default function AdminAnnouncements() {
       } else {
         await announcementService.updateAnnouncement(editing.id, payload);
       }
-      await adminService.logAction(currentUser?.username || 'admin', isCreate ? 'announcement.create' : 'announcement.update', payload.title);
       toast.success(isCreate ? 'Announcement created.' : 'Announcement updated.');
       setEditing(null);
       await load();
@@ -94,7 +90,6 @@ export default function AdminAnnouncements() {
     setDeleting(true);
     try {
       await announcementService.deleteAnnouncement(deleteTarget.id);
-      await adminService.logAction(currentUser?.username || 'admin', 'announcement.delete', deleteTarget.title);
       toast.success('Announcement deleted.');
       setDeleteTarget(null);
       await load();
@@ -123,7 +118,6 @@ const resetDismissals = async () => {
     setResetting(true);
     try {
       await announcementService.resetDismissals();
-      await adminService.logAction(currentUser?.username || 'admin', 'announcement.reset_dismissals', 'Own browser');
       toast.success('Your dismissed banners will show again.');
     } catch (err) {
       toast.error(err?.message || 'Could not reset dismissals.');

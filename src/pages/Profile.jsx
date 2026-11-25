@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { motion, useReducedMotion } from 'framer-motion';
-import { Trophy, Flag, Flame, Target, Star, Calendar, TrendingUp, CheckCircle, Lightbulb, Zap, Award } from 'lucide-react';
+import { Link } from 'react-router-dom';
+import { Trophy, Flag, Flame, Target, Star, Calendar, TrendingUp, CheckCircle, Lightbulb, Zap, Award, ArrowRight } from 'lucide-react';
 import { useApp } from '../context/AppContext';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { achievementService, resolveIcon } from '../services/achievementService';
@@ -121,6 +122,13 @@ export default function Profile() {
   const tier = progression?.tier ?? 'Rookie';
   const elitePct = progression?.elitePct ?? 0;
 
+  // Daily solve streaks are server-authoritative (GET /api/v1/stats/me/):
+  // a streak day is a calendar day in the server's configured timezone on
+  // which the player recorded a successful solve. Zero is a real value, so
+  // it is rendered as "0 days" rather than a dash.
+  const currentStreak = stats?.current_streak ?? 0;
+  const longestStreak = stats?.longest_streak ?? 0;
+
   const categoryProgress = stats?.categoryProgress ?? [];
   const totalChallenges = categoryProgress.reduce((s, c) => s + c.total, 0);
   const completionPct = totalChallenges ? Math.round((solvedCount / totalChallenges) * 100) : 0;
@@ -198,7 +206,7 @@ export default function Profile() {
                 <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)' }}>
                   @{user.username}{user.email ? ` · ${user.email}` : ''}
                 </div>
-                {user.bio && <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6 }}>{user.bio}</p>}
+                {user.bio && <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginTop: 10, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{user.bio}</p>}
                 {(user.website || user.twitter || user.github) && (
                   <div style={{ display: 'flex', gap: 14, flexWrap: 'wrap', marginTop: 10 }}>
                     {user.website && (
@@ -230,7 +238,8 @@ export default function Profile() {
                 { icon: Star,   color: 'var(--accent-purple)', label: 'Points Earned', value: earned.toLocaleString() },
                 { icon: Lightbulb, color: 'var(--accent-orange)', label: 'Spent on Hints', value: spentOnHints.toLocaleString() },
                 { icon: Flag,   color: 'var(--accent-green)',   label: 'Challenges Solved', value: solvedCount },
-                { icon: Flame,  color: 'var(--accent-green)', label: 'Current Streak', value: '—' },
+                { icon: Flame,  color: 'var(--accent-green)', label: 'Current Streak', value: `${currentStreak} day${currentStreak === 1 ? '' : 's'}` },
+                { icon: Flame,  color: 'var(--accent-orange)', label: 'Longest Streak', value: `${longestStreak} day${longestStreak === 1 ? '' : 's'}` },
                 { icon: Target, color: 'var(--accent-green)', label: 'Completion', value: `${completionPct}%` },
               ].map(({ icon: Icon, color, label, value }) => (
                 <div key={label} style={{ display: 'flex', alignItems: 'center', gap: 12, marginBottom: 12 }}>
@@ -464,8 +473,11 @@ export default function Profile() {
 
           {/* Recent activity */}
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 16, overflow: 'hidden', animation: 'fadeInUp 0.4s ease 0.3s both' }}>
-            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)' }}>
+            <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--border-color)', display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 12 }}>
               <div className="section-title">Recent Activity</div>
+              <Link to="/history" style={{ display: 'inline-flex', alignItems: 'center', gap: 4, fontSize: '0.8rem', color: 'var(--text-muted)' }}>
+                View all <ArrowRight size={13} />
+              </Link>
             </div>
             {recentActivity.length === 0 ? (
               <div style={{ padding: '28px 24px', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.8rem' }}>

@@ -31,6 +31,7 @@ A full-featured Capture The Flag (CTF) competition platform built as a **React s
 | `/achievements` | Achievements | User panel (sidebar) |
 | `/events` | Events | User panel (sidebar) |
 | `/profile` | Profile | User panel (sidebar) |
+| `/history` | History | User panel (sidebar) |
 | `/settings` | Settings | User panel (sidebar) |
 | `/admin` | Admin Dashboard | Admin panel |
 | `/admin/challenges` | Manage Challenges | Admin panel |
@@ -38,6 +39,9 @@ A full-featured Capture The Flag (CTF) competition platform built as a **React s
 | `/admin/challenges/:id/edit` | Edit Challenge | Admin panel |
 | `/admin/categories` | Manage Categories | Admin panel |
 | `/admin/users` | Manage Users | Admin panel |
+| `/admin/analytics` | Analytics | Admin panel |
+| `/admin/announcements` | Announcements | Admin panel |
+| `/admin/achievements` | Achievements | Admin panel |
 | `/admin/audit-logs` | Audit Logs | Admin panel |
 | `/admin/settings` | Admin Settings | Admin panel |
 | `/admin/events` | Events (placeholder/scaffolded) | Admin panel |
@@ -52,15 +56,18 @@ A full-featured Capture The Flag (CTF) competition platform built as a **React s
 
 ### Student / Competitor (signed-in participants)
 - Complete the **onboarding flow** after registering.
-- Get the **user panel** (top navbar + left sidebar) with access to Dashboard, Challenges, Leaderboard, Achievements, Events, Profile, and Settings.
+- Get the **user panel** (top navbar + left sidebar) with access to Dashboard, Challenges, Leaderboard, Achievements, Events, Profile, History, and Settings.
 
 ### Admin
-- Same user-panel experience, **plus** `/admin/*` sections for managing challenges, categories, users, analytics, and announcements.
+- Same user-panel experience, **plus** `/admin/*` sections for managing challenges, categories, users, analytics, announcements, achievements, and the read-only audit trail.
 - Admin sidebar is shown through `AdminLayout.jsx` (rendered inside `.admin-panel` wrapper).
 
 ### Sign-in types (same entry point)
-- **Email & password** — regular registration.
-- **Google / GitHub** — OAuth-style buttons on the login/register pages (auto-fills a "social" sign-in route).
+- **Username or email & password** — the only working sign-in method.
+- **Google** — the button exists but OAuth is not implemented; it reports
+  "Google sign-in is not available yet."
+- **Demo buttons** — local development shortcuts for the seeded
+  `admin` / `h4ck3r_x` accounts.
 
 ---
 
@@ -117,7 +124,9 @@ A dockable terminal exposed by the navbar button. Provides a simulated PowerShel
 
 - Input box styled like a terminal prompt (`C:\Users\...>`) with command history.
 - Pressing **Enter** runs the command, echoes it to the log, and clears the input.
-- Example commands: `help`, `whoami`, `ls`, `dir`, `cat flag.txt`, etc. with mock outputs.
+- Example commands: `help`, `whoami`, `ls`, `dir`, `cat flag.txt`, etc. It is a
+  decorative simulation: challenge titles come from the static seed data, not
+  from the API, and the output has no effect on the platform.
 - A "system message" banner effect when opened.
 
 ### 5.3 Sidebar (left nav)
@@ -127,6 +136,7 @@ A dockable terminal exposed by the navbar button. Provides a simulated PowerShel
 - **Achievements** (Award)
 - — *Account* section —
 - **Profile** (User)
+- **History**
 - **Settings** (Settings)
 
 ### 5.4 Dashboard (`/dashboard`)
@@ -151,7 +161,8 @@ A dockable terminal exposed by the navbar button. Provides a simulated PowerShel
 - **Hints** — expandable HintCards (up to 3 hints).
 - **Cheatsheet tab** — quick reference content.
 - **Flag submit box** — enter flag, gets "correct"/"incorrect" feedback.
-- **Instance spawning** — request/spin-up a container (target type, host, port) for dynamic challenges.
+- **Instance spawning** — the instance panel is scaffolded; starting/stopping
+  an instance has no backend yet (Docker challenge containers are deferred).
 - **Files & downloads** — attachable challenge files.
 
 ### 5.7 Leaderboard (`/leaderboard`)
@@ -168,6 +179,9 @@ A dockable terminal exposed by the navbar button. Provides a simulated PowerShel
 ### 5.9 Events (`/events`)
 - **Countdown** card to the next event.
 - **Event list** — expandable event cards with date, location/online, details, and "Register" action.
+- **Deferred feature:** events are mock data (`src/data/events.js`) and
+  registrations are stored in the browser's `localStorage`. There is no Events
+  model or API in the backend yet.
 
 ### 5.10 Profile (`/profile`)
 - **Profile card** — avatar, username, rank, bio.
@@ -175,9 +189,19 @@ A dockable terminal exposed by the navbar button. Provides a simulated PowerShel
 - **Badges** — earned achievement badges.
 - **Weekly / Monthly progress** — chart bars.
 - **Category performance** — points per category, shown as its own card below the profile card.
-- **Activity log** — recent actions.
+- **Activity log** — recent actions. **View all** opens `/history`.
 
-### 5.11 Settings (`/settings`)
+### 5.11 History (`/history`)
+- Private, server-backed history for the signed-in account, linked from the
+  sidebar and the Profile activity card.
+- **Solves** tab — `GET /api/v1/solves/me/`; challenge, category, difficulty,
+  historical points and timestamp.
+- **Submissions** tab — `GET /api/v1/submissions/me/`; challenge, category,
+  difficulty, correct/miss verdict and timestamp (flag values are never returned).
+- Both tabs use server-side pagination. The backend derives the owner from the
+  access token; no user id is accepted from the client.
+
+### 5.12 Settings (`/settings`)
 - **Tabs**: Profile, Privacy, Security, Notifications, Danger Zone.
 - Edits profile info, privacy toggles, password change, notification preferences, and an **account deletion** section.
 
@@ -201,9 +225,16 @@ Admin pages live under `/admin` with their own sidebar (`AdminLayout.jsx`) listi
 The admin sidebar shows a bright "Admin Panel" header.
 
 ### 6.1 Admin Dashboard (`/admin`)
-- **Stat cards** — total users, challenges, submissions, active containers.
-- **Charts** — submissions & user growth (bars/lines).
-- **Toast invite** examples and **Quick actions** — "Create Challenge", "Manage Challenges", "View Users", "View Platform".
+- **Stat cards** — derived server-side from real records (users, challenges,
+  solves, submissions); a failed request hides the cards instead of showing
+  zeros.
+- **Charts** — solve activity, category distribution and leaderboard data from
+  `GET /api/v1/admin/analytics/`.
+- **Quick actions** — "Create Challenge", "Manage Challenges", "View Users",
+  "View Platform".
+- **Recent Admin Activity** — the five newest rows from the server-side audit
+  trail, with a **View all** link. If the audit request fails, the panel shows an
+  unavailable message without breaking the rest of the dashboard.
 
 ### 6.2 Manage Challenges (`/admin/challenges`)
 - **Table** of challenges: category, title, difficulty, points, status (Draft/Published), solves; striped rows.
@@ -213,28 +244,73 @@ The admin sidebar shows a bright "Admin Panel" header.
 ### 6.3 Create / Edit Challenge (`/admin/challenges/new`, `/admin/challenges/:id/edit`)
 Multi-tab form:
 
-- **Overview** — title, category, difficulty, points, flag, description (mock editor).
-- **Files** — drag-and-drop upload zone (ZIP, TXT, PDF, PNG, JPG, PCAP, PY, C, EXE, APK) with a removable file list (mock).
-- **Deployment** — enable a live **Challenge Instance** (target type, target URL/host, port) with a note that Docker/health-check management happens on the backend.
-- Sticky action bar: **Save Draft**, **Preview** (shows an alert rather than a real preview), **Publish Challenge** (or Update & Publish when editing), **Cancel**.
+- **Overview** — title, category, difficulty, points, description, scenario,
+  objectives, instructions, author and tags.
+- **Files** — drag-and-drop upload zone (ZIP, TXT, PDF, PNG, JPG, PCAP, PY, C,
+  EXE, APK). Files are uploaded through the real attachments endpoint after
+  the challenge is saved.
+- **Deployment** — captures optional connection details (target type, URL/host,
+  port) shown to players. Docker deployment, health checks and auto-restart are
+  handled by infrastructure that does not exist in this project yet.
+- Sticky action bar: **Save Draft**, **Publish Challenge** (or Update & Publish
+  when editing), and **Cancel**.
 
 ### 6.4 Categories (`/admin/categories`)
-- **Read-only grid** of existing categories with name, shield-and-clock icon, challenge count, "View" action.
-- **Add category** form (mock) for new ones.
+- **Table** of the real categories from `GET /api/v1/categories/`, with name,
+  glyph, description and challenge count. Counts include drafts/scheduled
+  challenges when the admin list is readable, otherwise the public published
+  counts are shown.
+- **Create / edit** opens a modal prefilled from the selected row. Writable
+  fields are name, description, icon, color and order; the backend derives and
+  keeps the slug. Field errors appear beside the controls, API errors inside the
+  modal, and successful saves show a toast and reload the list.
+- **Delete** asks for confirmation. A category still used by a challenge or an
+  achievement rule is **refused**: the modal shows the backend explanation, the
+  row stays visible and nothing is cascaded or reassigned. Only an unused
+  category is removed.
+- Successful mutations are written to the server-side audit trail as
+  `category.create`, `category.update` (changed field names only) and
+  `category.delete`. The endpoints require `challenges.add_category`,
+  `challenges.change_category` and `challenges.delete_category`; reads remain
+  the public category endpoint.
 
 ### 6.5 Users (`/admin/users`)
-- **Stats bar** — total users, active today, new this week, banned.
-- **Tables** filtered by **role** (All/Admin/Moderator/Player) and **status** (All/Active/Suspended/Banned).
-- Row actions: promote/demote role, suspend, delete.
-- **User detail drawer** — per-user solve history and **Recent Submissions** (user, challenge, flag, result, points).
+- **Stats bar** — totals supplied by the admin user API.
+- **Tabs** — Active and Deleted (soft-deleted accounts), plus username/email
+  search and server-side pagination.
+- Row actions: create a user, change status (active/suspended/banned) with a
+  reason, edit profile fields, move to Deleted, and restore. Superusers are
+  protected from deletion/restore.
+- **User detail drawer** — profile, points, join/last-login dates, status note,
+  and group membership editing. Per-user solve/submission history is not exposed
+  to administrators; players can view their own at `/history`.
 
 ### 6.6 Audit Logs (`/admin/audit-logs`)
-- **Filterable log feed** — actor, action, target.
-- Actions colored by **badge style** (login, create, update, delete, publish, etc.).
+- **Authoritative, read-only feed** from `GET /api/v1/admin/audit-logs/`
+  (requires `audit.view_auditlog`).
+- **Server-side filters** — search, exact actor, action, target type and
+  inclusive date-from/date-to; server-side pagination (20 per page).
+- Columns: actor, action badge, target, safe details (changed field names,
+  old/new status, group changes, attachment id) and timestamp. No IP addresses
+  are displayed or stored.
+- **Export page** downloads the current page as CSV.
+- The trail is written transactionally by the backend for successful admin
+  mutations only. Failed attempts, reads and deferred features produce no entry.
+  The browser never writes audit rows.
 
 ### 6.7 Admin Settings (`/admin/settings`)
-- **Sections with toggle switches / sliders** (e.g. challenge registration, team limits, auto-grading). Values are editable mock controls.
-- Save button (feedback).
+- Loads from `GET /api/v1/admin/settings/` and saves through a partial
+  `PATCH /api/v1/admin/settings/`. Both require the `Admin` group's
+  `platform_settings` model permissions.
+- **Runtime-persistent:** allow new registrations, public leaderboard access and
+  hint unlocks. These are enforced by the corresponding backend endpoints.
+- After PATCH, the page re-reads the settings and shows success only when the
+  stored values match. Errors and field validation failures stay visible.
+- **Disabled and documented, not persisted:** platform name/tagline (hardcoded
+  branding), domain (deployment environment), account approval (no approval
+  workflow), global hint percentage (costs are per challenge), email
+  notifications (no email subsystem) and maintenance mode (operational concern).
+- There is no localStorage fallback for platform settings.
 
 ### 6.8 Placeholder sections
 Unfinished/scaffolded admin sections (`/admin/events` etc.) render `AdminPlaceholder` with an "under construction" message.
@@ -249,8 +325,71 @@ Unfinished/scaffolded admin sections (`/admin/events` etc.) render `AdminPlaceho
 
 ---
 
-## 8. Notes / Current State
+## 8. Current implementation status
 
-- This is the **front-end build only** — API calls, authentication, Docker instance management, and data persistence are not wired up yet. Most data is mocked (mock users, mock challenges, mock submissions, mock file uploads, mock terminal output).
-- The **search bar** and **PowerShell console** are functional UI with mock logic.
-- Certain admin actions (Preview, Delete, Publish) currently use browser alerts/demos rather than real back-end calls.
+The application is no longer a frontend-only demo. Authentication, the public
+challenge flow, the player dashboard/leaderboard/achievements/settings, and the
+admin challenge/user/analytics/announcement/achievement surfaces all call the
+Django REST API at `/api/v1/`.
+
+**API-backed:** registration, login/refresh/logout, password change,
+preferences, onboarding, dashboard statistics and streaks, challenges,
+flag submission, hint reveal, attachments, leaderboard, achievements,
+notifications, announcements banner, profile, account settings, private
+submission/solve history, admin challenges (CRUD/publish/attachments), admin
+users (status/groups/restore/soft delete), admin analytics, admin
+announcements, admin achievements, admin categories (list/create/edit/delete
+with non-cascading delete protection), the three runtime admin settings, and
+the read-only server-side audit trail.
+
+**Intentionally deferred:**
+
+| Area | Current behaviour |
+| --- | --- |
+| Events (`/events`) | Mock events from `src/data/events.js`; registration stored in `localStorage` |
+| Admin → Events | `AdminPlaceholder` |
+| Challenge instances | `startInstance` / `stopInstance` are no-ops; no container backend |
+| Admin → Settings | Registration, leaderboard and hint toggles persist. Branding, domain, approval, global hint pricing, email and maintenance controls are disabled/documented |
+| Google sign-in | Not implemented; reports "not available yet" |
+| Landing page counters | Static marketing numbers |
+| PowerShell console | Decorative simulated terminal using static seed challenges |
+
+`src/data/notifications.js` is an unused leftover that no page imports. The old
+browser-local audit log and its `adminService` mock methods have been removed;
+there is no client-side audit fallback.
+
+### Development data
+
+`ctf-platform-be/db.sqlite3` already contains development data: users,
+challenges, categories, solves, submissions, notifications, achievements and
+awards. Do not reset or recreate it. The seeded demo accounts are `admin` /
+`admin123` (platform admin) and `h4ck3r_x` / `password123` (player); these are
+development-only values.
+
+Do not re-run `create_demo_users` on a populated database: it rewrites the demo
+accounts' points/email/role. The other seed commands are idempotent but are not
+part of normal startup.
+
+### Checks
+
+```powershell
+cd E:\Flag-hunt\ctf-platform-be
+.\venv\Scripts\python.exe manage.py check
+.\venv\Scripts\python.exe manage.py makemigrations --check --dry-run
+.\venv\Scripts\python.exe manage.py test
+
+cd E:\Flag-hunt\ctf-platform
+node scripts/admin-users-harness/run.mjs
+node scripts/challenges-harness/run.mjs
+node scripts/settings-harness/run.mjs
+node scripts/history-harness/run.mjs
+npm run build
+```
+
+There is no automated browser/E2E suite configured.
+
+### Further reading
+
+- Repository setup, environment variables, Docker/Celery and troubleshooting:
+  [`../README.md`](../README.md)
+- Backend runbook: [`../ctf-platform-be/README.md`](../ctf-platform-be/README.md)

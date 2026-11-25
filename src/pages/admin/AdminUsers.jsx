@@ -206,7 +206,6 @@ export default function AdminUsers() {
     setBusy(action);
     try {
       const updated = await adminService.setUserStatus(u.id, ACTION_TO_STATUS[action], reason);
-      await adminService.logAction(actor, `user.${action}`, u.username);
       toast.success(`${u.username} set to ${ACTION_TO_STATUS[action]}.`);
       setReasonModal(null);
       await load();
@@ -254,7 +253,6 @@ export default function AdminUsers() {
     setBusy('groups');
     try {
       const updated = await adminService.setUserGroups(drawerUser.id, groupSelection);
-      await adminService.logAction(actor, 'user.groups', drawerUser.username);
       toast.success('Group membership updated.');
       setDrawerUser(updated);
       await load();
@@ -276,7 +274,6 @@ export default function AdminUsers() {
     setBusy('create');
     try {
       await adminService.createUser(createForm);
-      await adminService.logAction(actor, 'user.create', createForm.username);
       toast.success(`User ${createForm.username} created.`);
       setCreateModal(false);
       setCreateForm(EMPTY_CREATE_FORM);
@@ -300,14 +297,12 @@ export default function AdminUsers() {
     try {
       if (action === 'restore') {
         const updated = await adminService.restoreUser(u.id);
-        await adminService.logAction(actor, 'user.restore', u.username);
         toast.success(`Restored ${u.username}.`);
         setConfirmModal(null);
         if (drawerUser?.id === u.id) setDrawerUser(updated);
         await load();
       } else {
         await adminService.removeUser(u.id);
-        await adminService.logAction(actor, 'user.delete', u.username);
         toast.success(`Moved ${u.username} to Deleted.`);
         setConfirmModal(null);
         if (drawerUser?.id === u.id) setDrawerUser(null);

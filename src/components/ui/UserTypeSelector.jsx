@@ -6,7 +6,7 @@ import { useApp } from '../../context/AppContext';
 
 export default function UserTypeSelector() {
   const { user } = useApp();
-  const userType = user?.userType;
+  const userType = user?.learning_mode ?? user?.learningMode ?? user?.userType ?? null;
   const auth = !!user;
   const [hoveredType, setHoveredType] = useState(null);
 

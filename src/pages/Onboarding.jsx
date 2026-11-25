@@ -6,6 +6,7 @@ import {
   BookOpen, Trophy, Briefcase, User, CheckCircle, Rocket, Globe, Image,
 } from 'lucide-react';
 import { useApp } from '../context/AppContext';
+import { normaliseUser } from '../services/authService';
 import { onboardingService } from '../services/onboardingService';
 
 const STEPS = [
@@ -151,7 +152,7 @@ function SelectionStep({ options, selected, onToggle, multi = false, title, subt
 
 export default function Onboarding() {
   const navigate = useNavigate();
-  const { updateUser } = useApp();
+  const { user, updateUser } = useApp();
   const [step, setStep] = useState(0);
   const [data, setData] = useState({
     skillLevel: null,
@@ -198,8 +199,10 @@ export default function Onboarding() {
       // Persist server-side: /me/ is the source of truth on reload, so a local
       // only save would leave onboardingCompleted false and bounce the user
       // straight back here on the next page load.
-      await onboardingService.saveOnboarding(payload);
-      updateUser({ onboardingCompleted: true, userType, onboarding: payload });
+      const saved = await onboardingService.saveOnboarding(payload);
+      // Backend response is authoritative (includes learning_mode and onboarding
+      // sync behavior from Stage 3.1). Normalize for backward-compatible aliases.
+      updateUser(normaliseUser({ ...(user || {}), ...(saved || {}), onboardingCompleted: true, onboarding: saved?.onboarding ?? payload }));
       navigate('/dashboard', { replace: true });
     } catch (err) {
       // Stay on the last step so the answers are not lost and the user can retry.

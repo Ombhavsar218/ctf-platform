@@ -164,7 +164,7 @@ function EventCard({ event, onJoin }) {
 
       {/* Description + expand */}
       <div style={{ padding: '20px 28px' }}>
-        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', lineHeight: 1.7, marginBottom: 16 }}>
+        <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', lineHeight: 1.7, marginBottom: 16, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
           {event.description}
         </p>
 
@@ -255,7 +255,7 @@ function EventCard({ event, onJoin }) {
                         <div style={{ flex: 1 }}>
                           <div style={{ fontWeight: 700, fontSize: '0.8rem' }}>{s.event}</div>
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--accent-cyan)' }}>{s.time}</div>
-                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>{s.description}</div>
+                          <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{s.description}</div>
                         </div>
                       </div>
                     ))}

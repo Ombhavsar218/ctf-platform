@@ -5,9 +5,7 @@ import {
 import { toast } from 'react-toastify';
 import Modal from '../../components/ui/Modal';
 import AchievementBadge from '../../components/ui/AchievementBadge';
-import { useApp } from '../../context/AppContext';
 import { challengeService } from '../../services/challengeService';
-import { adminService } from '../../services/adminService';
 import {
   achievementService, ICON_CHOICES, resolveIcon,
   CRITERIA_TYPES, criteriaMeta, RARITIES, GRADIENT_PRESETS, describeRule,
@@ -85,7 +83,6 @@ const extractFieldErrors = (err) => {
 };
 
 export default function AdminAchievements() {
-  const { user: currentUser } = useApp();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
@@ -174,11 +171,6 @@ export default function AdminAchievements() {
       } else {
         await achievementService.updateAchievement(editing.id, payload);
       }
-      await adminService.logAction(
-        currentUser?.username || 'admin',
-        isCreate ? 'achievement.create' : 'achievement.update',
-        payload.name,
-      );
       toast.success(isCreate ? 'Achievement created.' : 'Achievement updated.');
       setEditing(null);
       await load();
@@ -197,7 +189,6 @@ export default function AdminAchievements() {
     setDeleting(true);
     try {
       await achievementService.deleteAchievement(deleteTarget.id);
-      await adminService.logAction(currentUser?.username || 'admin', 'achievement.delete', deleteTarget.name);
       toast.success('Achievement deleted.');
       setDeleteTarget(null);
       await load();

@@ -34,21 +34,3 @@ export const adminSubmissions = [
   { id: 514, user: 'FlagCatcher',  challenge: 'Stego Myth',                flag: 'CTF{b1ts_0f_h1dd3n_data}',      status: 'correct',   points: 90,  submittedAt: '2026-09-21 06:22:58' },
   { id: 515, user: 'InfiniteLoop', challenge: 'Socket Interface',          flag: 'CTF{s0cket_pr0t0c0l}',          status: 'correct',   points: 130, submittedAt: '2026-09-21 05:50:36' },
 ];
-
-export const auditLogs = [
-  { id: 1,  actor: 'ShadowRoot',   action: 'challenge.update',   target: 'JWT Jailbreak',      ip: '192.168.1.104', timestamp: '2026-09-21 09:02:15' },
-  { id: 2,  actor: 'NullByte',     action: 'user.suspend',       target: 'TerminalGhost',      ip: '10.0.0.42',      timestamp: '2026-09-21 08:55:37' },
-  { id: 3,  actor: 'ShadowRoot',   action: 'challenge.publish',  target: 'Packet Phantom',     ip: '192.168.1.104',  timestamp: '2026-09-21 08:41:20' },
-  { id: 4,  actor: 'ByteWitch',    action: 'category.create',    target: 'Mobile Security',    ip: '172.16.0.7',     timestamp: '2026-09-21 08:12:48' },
-  { id: 5,  actor: 'ShadowRoot',   action: 'settings.update',    target: 'Platform Settings',  ip: '192.168.1.104',  timestamp: '2026-09-21 07:48:03' },
-  { id: 6,  actor: 'NullByte',     action: 'submission.review',  target: '512',               ip: '10.0.0.42',      timestamp: '2026-09-21 07:30:59' },
-  { id: 7,  actor: 'ShadowRoot',   action: 'challenge.delete',   target: 'Vulnerable Vault',   ip: '192.168.1.104',  timestamp: '2026-09-21 07:05:11' },
-  { id: 8,  actor: 'ByteWitch',    action: 'user.promote',       target: 'PacketHunter',       ip: '172.16.0.7',     timestamp: '2026-09-21 06:44:27' },
-  { id: 9,  actor: 'NullByte',     action: 'challenge.update',   target: 'Base64 Labyrinth',   ip: '10.0.0.42',      timestamp: '2026-09-21 06:19:50' },
-  { id: 10, actor: 'ShadowRoot',   action: 'submission.review',  target: '508',               ip: '192.168.1.104',  timestamp: '2026-09-21 05:58:32' },
-  { id: 11, actor: 'ByteWitch',    action: 'settings.update',    target: 'Platform Settings',  ip: '172.16.0.7',     timestamp: '2026-09-21 05:40:16' },
-  { id: 12, actor: 'NullByte',     action: 'user.ban',           target: 'n3tw0rk3r',          ip: '10.0.0.42',      timestamp: '2026-09-21 05:21:44' },
-  { id: 13, actor: 'ShadowRoot',   action: 'challenge.create',   target: 'Stego Myth',         ip: '192.168.1.104',  timestamp: '2026-09-21 04:59:08' },
-  { id: 14, actor: 'ByteWitch',    action: 'challenge.publish',  target: 'WiFi Deauth',        ip: '172.16.0.7',     timestamp: '2026-09-21 04:33:26' },
-  { id: 15, actor: 'NullByte',     action: 'submission.review',  target: '507',               ip: '10.0.0.42',      timestamp: '2026-09-21 04:02:57' },
-];

@@ -1,15 +1,17 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback, useRef } from 'react';
 import { useParams, Link, useNavigate } from 'react-router-dom';
 import {
   ArrowLeft, Flag, Users, CheckCircle, XCircle, Download,
   ExternalLink, Copy, ChevronRight, Tag, Clock, User, Globe,
   File, FileText, FileCode, FileImage, FileTerminal, Package, Smartphone, Activity,
-  Power, Server, Loader, Square, AlertTriangle
+  Power, Server, Loader, Square, AlertTriangle, TerminalSquare
 } from 'lucide-react';
 import HintCard from '../components/ui/HintCard';
 import CheatsheetTab from '../components/ui/CheatsheetTab';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
+import InteractiveTerminal from '../components/ui/InteractiveTerminal';
 import { challengeService } from '../services/challengeService';
+import { tokenStore } from '../services/api';
 import { useApp } from '../context/AppContext';
 
 const diffClass = { Easy: 'diff-easy', Medium: 'diff-medium', Hard: 'diff-hard', Insane: 'diff-insane' };
@@ -19,10 +21,89 @@ const fileIcons = {
   c: FileCode, binary: FileTerminal, pcap: Activity, apk: Smartphone, default: File,
 };
 
+const MODE_LABELS = {
+  student: {
+    introduction: 'Introduction',
+    scenario: 'Scenario',
+    learning_objectives: 'Objectives',
+    tasks: 'Tasks',
+    checkpoints: 'Checkpoints',
+    guidance: 'Guidance',
+    review_questions: 'Review',
+    common_mistakes: 'Common Mistakes',
+    remediation_guidance: 'Remediation',
+  },
+  competitor: {
+    challenge_rules: 'Rules',
+    objective: 'Objective',
+    time_limit: 'Time Limit',
+    submission_instructions: 'Submission Instructions',
+  },
+};
+
+function renderModeValue(value) {
+  if (value == null) return null;
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return (
+      <div style={{ color: 'var(--text-secondary)', fontSize: '0.9rem', lineHeight: 1.7, whiteSpace: 'pre-wrap' }}>
+        {String(value)}
+      </div>
+    );
+  }
+  if (Array.isArray(value)) {
+    if (value.length === 0) return null;
+    return (
+      <div className="d-flex flex-column gap-2">
+        {value.map((item, i) => {
+          if (item == null) return null;
+          if (typeof item === 'string' || typeof item === 'number' || typeof item === 'boolean') {
+            return (
+              <div key={i} style={{ display: 'flex', gap: 12, padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.78rem', color: 'var(--accent-green)', fontWeight: 700, minWidth: 22 }}>{String(i + 1).padStart(2, '0')}</span>
+                <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{String(item)}</span>
+              </div>
+            );
+          }
+          if (typeof item === 'object') {
+            const title = item.title ?? item.name ?? item.label ?? `Item ${i + 1}`;
+            const body = item.description ?? item.text ?? item.content ?? item.detail ?? item.value ?? null;
+            const rest = Object.entries(item).filter(([k]) => !['title', 'name', 'label', 'description', 'text', 'content', 'detail', 'value', 'id', 'order'].includes(k));
+            return (
+              <div key={i} style={{ padding: '12px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+                <div style={{ fontWeight: 700, fontSize: '0.88rem', color: 'var(--text-primary)', marginBottom: body != null ? 6 : 0 }}>{String(title)}</div>
+                {body != null && <div style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.6, whiteSpace: 'pre-wrap' }}>{String(body)}</div>}
+                {rest.length > 0 && (
+                  <div style={{ marginTop: 6, fontFamily: 'var(--font-mono)', fontSize: '0.75rem', color: 'var(--text-muted)', whiteSpace: 'pre-wrap' }}>
+                    {rest.map(([k, v]) => `${k}: ${typeof v === 'object' ? JSON.stringify(v) : String(v)}`).join(' · ')}
+                  </div>
+                )}
+              </div>
+            );
+          }
+          return null;
+        })}
+      </div>
+    );
+  }
+  if (typeof value === 'object') {
+    return (
+      <div className="d-flex flex-column gap-2">
+        {Object.entries(value).map(([k, v]) => (
+          <div key={k} style={{ padding: '10px 14px', background: 'var(--bg-secondary)', borderRadius: 8, border: '1px solid var(--border-color)' }}>
+            <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--text-muted)', textTransform: 'uppercase', marginBottom: 4 }}>{k.replace(/_/g, ' ')}</div>
+            {renderModeValue(v)}
+          </div>
+        ))}
+      </div>
+    );
+  }
+  return null;
+}
+
 export default function ChallengeDetails() {
   const { id } = useParams();
   const navigate = useNavigate();
-  const { addPoints, refreshStats, refreshUnreadCount } = useApp();
+  const { addPoints, refreshStats, refreshUnreadCount, user } = useApp();
 
   const [challenge, setChallenge] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -35,52 +116,184 @@ export default function ChallengeDetails() {
 
   const [instance, setInstance] = useState(null);
   const [instanceState, setInstanceState] = useState('idle');
+  const [instanceError, setInstanceError] = useState('');
   const [timeLeft, setTimeLeft] = useState(0);
   const [instCopied, setInstCopied] = useState(false);
   const [showComplete, setShowComplete] = useState(false);
+  const [terminalOpen, setTerminalOpen] = useState(false);
+
+  const [modeContent, setModeContent] = useState(null); // { mode, challenge_id, content, solution_available }
+  const [modeContentLoading, setModeContentLoading] = useState(false);
+  const [modeContentError, setModeContentError] = useState('');
+  const modeContentReqRef = useRef(0);
+  const challengeReqRef = useRef(0);
+
+  const [solution, setSolution] = useState(null); // backend solution payload
+  const [solutionLoading, setSolutionLoading] = useState(false);
+  const [solutionError, setSolutionError] = useState('');
+  const [solutionVisible, setSolutionVisible] = useState(false);
+  const solutionReqRef = useRef(0);
+
+  const learningMode = user?.learning_mode ?? user?.learningMode ?? user?.userType ?? null;
+  const userId = user?.id ?? null;
+
+  const applyInstance = useCallback((inst) => {
+    setInstance(inst);
+    setInstanceState(inst ? inst.status : 'idle');
+    setInstanceError(inst?.failureReason || '');
+    setTimeLeft(inst?.remainingSeconds ?? 0);
+  }, []);
+
+  const handleDownloadFile = useCallback(async (file) => {
+    try {
+      const headers = {};
+      const token = tokenStore.getAccess();
+      if (token) headers.Authorization = `Bearer ${token}`;
+      const res = await fetch(file.url, { headers });
+      if (!res.ok) {
+        throw new Error(res.status === 404 ? 'File not found or access denied.' : `Download failed (${res.status}).`);
+      }
+      const blob = await res.blob();
+      const blobUrl = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = blobUrl;
+      a.download = file.name || 'download';
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+      URL.revokeObjectURL(blobUrl);
+    } catch (e) {
+      alert(e.message || 'Failed to download file.');
+    }
+  }, []);
 
   useEffect(() => {
+    let cancelled = false;
     (async () => {
-      const inst = await challengeService.getInstance(id);
-      setInstance(inst);
-      setInstanceState(inst ? 'active' : 'idle');
-      if (inst) setTimeLeft(Math.max(0, Math.floor((inst.expiresAt - Date.now()) / 1000)));
+      try {
+        const inst = await challengeService.getInstance(id);
+        if (!cancelled) applyInstance(inst);
+      } catch (e) {
+        if (!cancelled) setInstanceError(e.message || 'Could not load instance state.');
+      }
     })();
-  }, [id]);
+    return () => { cancelled = true; };
+  }, [id, applyInstance]);
+
+  // Poll while Docker is provisioning, tearing down, or an interactive
+  // terminal is open (so a stopped/expired instance is noticed promptly).
+  useEffect(() => {
+    const status = instance?.status;
+    const transitional = ['requested', 'starting', 'stopping'].includes(status);
+    if (!status || (!transitional && !terminalOpen)) return;
+    const poll = setInterval(async () => {
+      try {
+        applyInstance(await challengeService.getInstance(id));
+      } catch (e) {
+        setInstanceError(e.message || 'Could not refresh instance state.');
+      }
+    }, 1500);
+    return () => clearInterval(poll);
+  }, [instance?.status, id, applyInstance, terminalOpen]);
 
   useEffect(() => {
-    if (!instance) return;
-    const timer = setInterval(() => {
-      setTimeLeft(prev => {
-        if (prev <= 1) {
-          clearInterval(timer);
-          setInstance(null);
-          setInstanceState('idle');
-          setTimeLeft(0);
-          return 0;
-        }
-        return prev - 1;
-      });
-    }, 1000);
+    if (!instance?.expiresAt) return;
+    const tick = () => setTimeLeft(
+      Math.max(0, Math.floor((instance.expiresAt - Date.now()) / 1000))
+    );
+    tick();
+    const timer = setInterval(tick, 1000);
     return () => clearInterval(timer);
-  }, [instance]);
+  }, [instance?.expiresAt]);
 
-  const loadChallenge = async () => {
+  const loadChallenge = useCallback(async () => {
+    const reqId = ++challengeReqRef.current;
     setLoading(true);
     setError('');
     try {
       const c = await challengeService.getChallengeById(id);
+      if (reqId !== challengeReqRef.current) return;
       setChallenge(c);
     } catch (e) {
+      if (reqId !== challengeReqRef.current) return;
       setError(e.message || 'Challenge not found.');
+      setChallenge(null);
     } finally {
-      setLoading(false);
+      if (reqId === challengeReqRef.current) setLoading(false);
     }
-  };
+  }, [id]);
 
-  useEffect(() => { loadChallenge(); }, [id]);
+  useEffect(() => {
+    // Clear stale challenge/hint/submission UI on identity changes.
+    setChallenge(null);
+    setFlag('');
+    setResult(null);
+    setSubmitting(false);
+    setShowComplete(false);
+    setActiveTab('description');
+    loadChallenge();
+  }, [id, userId, learningMode, loadChallenge]);
 
-  const handleSubmit = async (e) => {
+  useEffect(() => {
+    setModeContent(null);
+    setModeContentError('');
+    setModeContentLoading(false);
+    modeContentReqRef.current += 1; // invalidate in-flight
+  }, [id, userId]);
+
+  useEffect(() => {
+    solutionReqRef.current += 1;
+    setSolution(null);
+    setSolutionError('');
+    setSolutionLoading(false);
+    setSolutionVisible(false);
+  }, [id, userId, learningMode]);
+
+  useEffect(() => {
+    const reqId = ++modeContentReqRef.current;
+    setModeContent(null);
+    setModeContentError('');
+
+    if (!challenge || String(challenge.id) !== String(id)) {
+      setModeContentLoading(false);
+      return;
+    }
+
+    const indicator = challenge.has_mode_content;
+    if (indicator === false) {
+      setModeContentLoading(false);
+      return;
+    }
+    if (indicator !== true) {
+      setModeContentLoading(false);
+      console.warn('[ChallengeDetails] Missing or invalid has_mode_content indicator; preserving ordinary challenge experience.', {
+        challengeId: id,
+        has_mode_content: indicator,
+      });
+      return;
+    }
+
+    let cancelled = false;
+    setModeContentLoading(true);
+    (async () => {
+      try {
+        const res = await challengeService.getChallengeContent(id);
+        if (cancelled || reqId !== modeContentReqRef.current) return;
+        if (res?.challenge_id != null && String(res.challenge_id) !== String(id)) return;
+        setModeContent(res);
+      } catch (e) {
+        if (cancelled || reqId !== modeContentReqRef.current) return;
+        setModeContent(null);
+        setModeContentError(e?.message || 'Could not load mode-specific content.');
+      } finally {
+        if (!cancelled && reqId === modeContentReqRef.current) {
+          setModeContentLoading(false);
+        }
+      }
+    })();
+
+    return () => { cancelled = true; };
+  }, [id, userId, learningMode, challenge?.id, challenge?.has_mode_content]);  const handleSubmit = async (e) => {
     e.preventDefault();
     const submitted = flag.trim();
     if (!submitted || submitting) return;
@@ -142,34 +355,90 @@ export default function ChallengeDetails() {
     });
   };
 
+  const handleViewSolution = async () => {
+    if (solutionLoading) return;
+    const reqId = ++solutionReqRef.current;
+    setSolutionLoading(true);
+    setSolutionError('');
+    setSolution(null);
+    setSolutionVisible(true);
+    try {
+      const res = await challengeService.getChallengeSolution(id);
+      if (reqId !== solutionReqRef.current) return;
+      if (res?.challenge_id != null && String(res.challenge_id) !== String(id)) return;
+      if (res?.solution_available !== true || !res?.solution) {
+        setSolution(null);
+        setSolutionError(res?.detail || 'Solution content is not available.');
+        return;
+      }
+      setSolution(res);
+    } catch (e) {
+      if (reqId !== solutionReqRef.current) return;
+      setSolution(null);
+      // Keep message from backend when useful; never expose raw sensitive details.
+      setSolutionError(e?.message || 'Could not load solution.');
+    } finally {
+      if (reqId === solutionReqRef.current) setSolutionLoading(false);
+    }
+  };
+
   const handleStartInstance = async () => {
+    setInstanceError('');
     setInstanceState('starting');
     try {
-      const inst = await challengeService.startInstance(id);
-      setInstance(inst);
-      setTimeLeft(Math.max(0, Math.floor((inst.expiresAt - Date.now()) / 1000)));
-      setInstanceState('active');
-    } catch {
+      applyInstance(await challengeService.startInstance(id));
+    } catch (e) {
       setInstanceState('idle');
+      setInstanceError(e.message || 'Could not start the challenge instance.');
     }
   };
 
   const handleStopInstance = async () => {
-    await challengeService.stopInstance(id);
-    setInstance(null);
-    setInstanceState('idle');
-    setTimeLeft(0);
+    setTerminalOpen(false);
+    setInstanceError('');
+    setInstanceState('stopping');
+    try {
+      applyInstance(await challengeService.stopInstance(id));
+    } catch (e) {
+      setInstanceState(instance?.status || 'idle');
+      setInstanceError(e.message || 'Could not stop the challenge instance.');
+    }
   };
 
   const copyInstance = () => {
-    if (instance?.command) {
-      navigator.clipboard.writeText(instance.command);
+    const value = instance?.connection?.url || instance?.connection?.target || instance?.command;
+    if (value) {
+      navigator.clipboard.writeText(value);
       setInstCopied(true);
       setTimeout(() => setInstCopied(false), 2000);
     }
   };
 
   const fmtTime = s => `${String(Math.floor(s / 60)).padStart(2, '0')}:${String(s % 60).padStart(2, '0')}`;
+
+  const instanceStatus = instance?.status || instanceState;
+  const isBusy = ['requested', 'starting', 'stopping'].includes(instanceStatus)
+    || instanceState === 'starting' || instanceState === 'stopping';
+  const isTerminal = !instance || ['stopped', 'expired', 'failed'].includes(instanceStatus);
+  const statusLabel = {
+    requested: 'REQUESTED', starting: 'STARTING', running: 'RUNNING',
+    stopping: 'STOPPING', stopped: 'STOPPED', expired: 'EXPIRED', failed: 'FAILED',
+  }[instanceStatus] || instanceStatus.toUpperCase();
+  const statusColor = instanceStatus === 'running' ? 'var(--accent-green)'
+    : instanceStatus === 'failed' || instanceStatus === 'expired' ? '#ef4444'
+      : isBusy ? 'var(--accent-yellow)' : 'var(--text-muted)';
+
+  // `isTerminal` above means a terminal *state*; this is terminal access mode.
+  const terminalMode = String(
+    challenge?.instanceMode || challenge?.instance_mode || ''
+  ).toLowerCase() === 'terminal';
+
+  const handleTerminalInstanceUnavailable = useCallback(() => {
+    setTerminalOpen(false);
+    challengeService.getInstance(id)
+      .then(applyInstance)
+      .catch(() => applyInstance(null));
+  }, [id, applyInstance]);
 
   if (loading) return <LoadingSpinner fullPage text="Loading challenge..." />;
 
@@ -197,11 +466,17 @@ export default function ChallengeDetails() {
 
   if (!challenge) return null;
 
+  const isModeAware = challenge.has_mode_content === true;
+  const effectiveMode = modeContent?.mode || learningMode || 'competitor';
+  const isStudentMode = effectiveMode === 'student';
+  const showHints = !isModeAware || isStudentMode;
+  const visibleHints = showHints ? (challenge.hints || []) : [];
   const tabs = [
     { id: 'description', label: 'Description' },
     { id: 'objectives', label: 'Objectives' },
+    ...(isModeAware ? [{ id: 'mode', label: (effectiveMode === 'student') ? 'Learning Guide' : 'Mission Brief' }] : []),
     { id: 'cheatsheet', label: 'Cheatsheet' },
-    { id: 'hints', label: `Hints (${challenge.hints?.length || 0})` },
+    ...(showHints ? [{ id: 'hints', label: `Hints (${visibleHints.length})` }] : []),
     ...(challenge.files?.length ? [{ id: 'files', label: `Files (${challenge.files.length})` }] : []),
     ...(challenge.connectionInfo ? [{ id: 'connect', label: 'Connect' }] : []),
   ];
@@ -311,15 +586,17 @@ export default function ChallengeDetails() {
                     color: 'var(--text-secondary)',
                     fontSize: '0.9rem',
                     lineHeight: 1.7,
+                    whiteSpace: 'pre-wrap',
+                    wordBreak: 'break-word',
                   }}>
                     {challenge.scenario}
                   </div>
                   <div className="section-title mb-3">Description</div>
-                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.8, marginBottom: 20 }}>{challenge.description}</p>
+                  <p style={{ color: 'var(--text-secondary)', lineHeight: 1.8, marginBottom: 20, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{challenge.description}</p>
                   {challenge.instructions && (
                     <>
                       <div className="section-title mb-3">Instructions</div>
-                      <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '16px 20px', fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                      <div style={{ background: 'var(--bg-input)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '16px 20px', fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>
                         {challenge.instructions}
                       </div>
                     </>
@@ -336,10 +613,144 @@ export default function ChallengeDetails() {
                         <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--accent-green)', fontWeight: 700, minWidth: 24 }}>
                           {String(i + 1).padStart(2, '0')}
                         </span>
-                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', lineHeight: 1.6 }}>{obj}</span>
+                        <span style={{ color: 'var(--text-secondary)', fontSize: '0.875rem', lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word' }}>{obj}</span>
                       </div>
                     ))}
                   </div>
+                </div>
+              )}
+
+              {activeTab === 'mode' && (
+                <div className="animate-fade-in">
+                  <div className="d-flex align-items-center justify-content-between mb-3" style={{ gap: 12, flexWrap: 'wrap' }}>
+                    <div className="section-title">
+                      {modeContent?.mode === 'student' ? 'Student Learning Guide' : modeContent?.mode === 'competitor' ? 'Competitor Mission Brief' : 'Mode Content'}
+                    </div>
+                    {modeContent?.mode && (
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-muted)', textTransform: 'uppercase', letterSpacing: '0.08em' }}>
+                        Backend mode: {modeContent.mode}
+                      </span>
+                    )}
+                  </div>
+
+                  {modeContentLoading && (
+                    <div style={{ padding: '20px 0' }}>
+                      <LoadingSpinner text="Loading mode content..." />
+                    </div>
+                  )}
+
+                  {!modeContentLoading && modeContentError && (
+                    <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: '14px 16px', color: 'var(--accent-red)', fontSize: '0.875rem' }}>
+                      <div style={{ fontWeight: 700, marginBottom: 4 }}>Mode content unavailable</div>
+                      <div style={{ opacity: 0.9 }}>{modeContentError}</div>
+                    </div>
+                  )}
+
+                  {!modeContentLoading && !modeContentError && modeContent && (() => {
+                    const content = modeContent.content && typeof modeContent.content === 'object' ? modeContent.content : {};
+                    const entries = Object.entries(content).filter(([, v]) => (
+                      v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0) && !(typeof v === 'string' && v.trim() === '')
+                    ));
+                    if (entries.length === 0) {
+                      return (
+                        <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem', padding: '16px 0' }}>
+                          No mode-specific content is available for this challenge.
+                        </div>
+                      );
+                    }
+                    const labels = MODE_LABELS[modeContent.mode] || {};
+                    return (
+                      <div className="d-flex flex-column gap-4">
+                        {entries.map(([key, value]) => {
+                          const label = labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+                          const rendered = renderModeValue(value);
+                          if (!rendered) return null;
+                          return (
+                            <div key={key}>
+                              <div className="section-title mb-2">{label}</div>
+                              {rendered}
+                            </div>
+                          );
+                        })}
+                      </div>
+                    );
+                  })()}
+
+                  {isModeAware && isStudentMode && (
+                    <div style={{ marginTop: 28, paddingTop: 24, borderTop: '1px solid var(--border-color)' }}>
+                      <div className="d-flex align-items-center justify-content-between mb-3" style={{ gap: 12, flexWrap: 'wrap' }}>
+                        <div>
+                          <div className="section-title">Solution &amp; Walkthrough</div>
+                          <div style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                            Learning/review action. Available only when backend authorization allows access.
+                          </div>
+                        </div>
+                        <div className="d-flex gap-2">
+                          {solutionVisible && !solutionLoading && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-secondary"
+                              onClick={() => { solutionReqRef.current += 1; setSolution(null); setSolutionError(''); setSolutionLoading(false); setSolutionVisible(false); }}
+                            >
+                              Hide Solution
+                            </button>
+                          )}
+                          {!solutionLoading && (
+                            <button
+                              type="button"
+                              className="btn btn-sm btn-outline-primary"
+                              onClick={handleViewSolution}
+                              disabled={solutionLoading}
+                            >
+                              {solutionError ? 'Retry Solution' : solutionVisible ? 'Refresh Solution' : 'View Solution'}
+                            </button>
+                          )}
+                        </div>
+                      </div>
+
+                      {solutionVisible && (
+                        <div style={{ background: 'rgba(116,100,220,0.04)', border: '1px solid rgba(116,100,220,0.2)', borderRadius: 12, padding: '18px' }}>
+                          {solutionLoading && <LoadingSpinner text="Checking solution access..." />}
+                          {!solutionLoading && solutionError && (
+                            <div style={{ background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.25)', borderRadius: 10, padding: '14px 16px', color: 'var(--accent-red)', fontSize: '0.875rem' }}>
+                              <div style={{ fontWeight: 700, marginBottom: 4 }}>Solution unavailable</div>
+                              <div style={{ opacity: 0.9 }}>{solutionError}</div>
+                            </div>
+                          )}
+                          {!solutionLoading && !solutionError && solution?.solution && (() => {
+                            const sol = solution.solution && typeof solution.solution === 'object' ? solution.solution : {};
+                            const labels = {
+                              explanation: 'Explanation',
+                              walkthrough: 'Walkthrough',
+                              expected_result: 'Expected Result',
+                              learning_takeaways: 'Takeaways',
+                            };
+                            const entries = Object.entries(sol).filter(([, v]) => (
+                              v !== null && v !== undefined && !(Array.isArray(v) && v.length === 0) && !(typeof v === 'string' && v.trim() === '')
+                            ));
+                            if (entries.length === 0) {
+                              return <div style={{ color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>No solution content is available.</div>;
+                            }
+                            return (
+                              <div className="d-flex flex-column gap-4">
+                                {entries.map(([key, value]) => {
+                                  const label = labels[key] || key.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
+                                  const rendered = renderModeValue(value);
+                                  if (!rendered) return null;
+                                  return (
+                                    <div key={key}>
+                                      <div className="section-title mb-2">{label}</div>
+                                      {rendered}
+                                    </div>
+                                  );
+                                })}
+                              </div>
+                            );
+                          })()}
+                        </div>
+                      )}
+                    </div>
+                  )}
                 </div>
               )}
 
@@ -347,17 +758,30 @@ export default function ChallengeDetails() {
                 <CheatsheetTab cheatsheet={challenge.cheatsheet} />
               )}
 
-              {activeTab === 'hints' && (
+              {activeTab === 'hints' && showHints && (
                 <div className="animate-fade-in">
                   <div className="section-title mb-3">Hints</div>
-                  {challenge.hints?.length === 0 ? (
+                  {visibleHints.length === 0 ? (
                     <div style={{ textAlign: 'center', padding: '32px', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
                       No hints available for this challenge.
                     </div>
                   ) : (
-                    challenge.hints.map((h, i) => (
-                      <HintCard key={h.id} hint={h} challengeId={challenge.id} index={i} onUnlocked={handleHintUnlocked} />
-                    ))
+                    [...visibleHints]
+                      .sort((a, b) => (a.order ?? 0) - (b.order ?? 0) || (a.id ?? 0) - (b.id ?? 0))
+                      .map((h, i, arr) => {
+                        const prevUnrevealed = arr.slice(0, i).some((p) => !p.revealed);
+                        const progressionLocked = isModeAware && isStudentMode && !h.revealed && prevUnrevealed;
+                        return (
+                          <HintCard
+                            key={h.id}
+                            hint={h}
+                            challengeId={challenge.id}
+                            index={i}
+                            onUnlocked={handleHintUnlocked}
+                            progressionLocked={progressionLocked}
+                          />
+                        );
+                      })
                   )}
                 </div>
               )}
@@ -373,15 +797,13 @@ export default function ChallengeDetails() {
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.875rem', fontWeight: 600, color: 'var(--text-primary)' }}>{f.name}</div>
                           <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-muted)' }}>{f.size}</div>
                         </div>
-                        <a
-                          href={f.url}
-                          download={f.name}
-                          target="_blank"
-                          rel="noreferrer"
+                        <button
+                          type="button"
+                          onClick={() => handleDownloadFile(f)}
                           className="btn btn-sm btn-outline-primary d-flex align-items-center gap-1"
                         >
                           <Download size={13} /> Download
-                        </a>
+                        </button>
                       </div>
                     ))}
                   </div>
@@ -423,24 +845,41 @@ export default function ChallengeDetails() {
             <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 16, padding: '24px', marginBottom: 16, animation: 'fadeInUp 0.4s ease 0.15s both' }}>
               <div className="d-flex align-items-center justify-content-between mb-3">
                 <div className="section-title">Challenge Instance</div>
-                {instance && <span className="status-dot green" />}
+                {instance && <span className={`status-dot ${instanceStatus === 'running' ? 'green' : ''}`} />}
               </div>
 
-              {instanceState === 'starting' && (
-                <div style={{ textAlign: 'center', padding: '22px 0', color: 'var(--text-secondary)' }}>
-                  <Loader size={28} color="var(--accent-green)" style={{ animation: 'spin 1s linear infinite', marginBottom: 12 }} />
-                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--accent-green)' }}>
-                    Deploying instance...
-                  </div>
-                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>This usually takes a few seconds</div>
+              {(instanceError || instance?.failureReason) && (
+                <div style={{ display: 'flex', gap: 8, alignItems: 'flex-start', background: 'rgba(239,68,68,0.08)', border: '1px solid rgba(239,68,68,0.28)', borderRadius: 8, padding: '10px 12px', marginBottom: 12, color: '#ef4444', fontSize: '0.78rem', lineHeight: 1.5 }}>
+                  <AlertTriangle size={14} style={{ flexShrink: 0, marginTop: 1 }} />
+                  <span>{instanceError || instance.failureReason}</span>
                 </div>
               )}
 
-              {!instance && instanceState !== 'starting' && (
+              {isBusy && (
+                <div style={{ textAlign: 'center', padding: '22px 0', color: 'var(--text-secondary)' }}>
+                  <Loader size={28} color={statusColor} style={{ animation: 'spin 1s linear infinite', marginBottom: 12 }} />
+                  <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: statusColor }}>
+                    {instanceStatus === 'stopping' || instanceState === 'stopping' ? 'Stopping instance...' : 'Deploying instance...'}
+                  </div>
+                  <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4 }}>
+                    Docker is confirming the container state
+                  </div>
+                </div>
+              )}
+
+              {!isBusy && isTerminal && (
                 <>
+                  {instance && (
+                    <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: statusColor, fontWeight: 700, letterSpacing: '0.1em', marginBottom: 8 }}>
+                      {statusLabel}
+                    </div>
+                  )}
                   <p style={{ color: 'var(--text-secondary)', fontSize: '0.85rem', lineHeight: 1.7, marginBottom: 16 }}>
-                    This challenge runs on a live environment. Start your own private
-                    instance and connect to it to capture the flag.
+                    {instanceStatus === 'expired'
+                      ? 'Your previous instance expired and was removed. Start a new one to continue.'
+                      : instanceStatus === 'failed'
+                        ? 'The previous start attempt failed. You can try again.'
+                        : 'This challenge runs on a live environment. Start your own private instance and connect to it to capture the flag.'}
                   </p>
                   <button
                     onClick={handleStartInstance}
@@ -452,13 +891,13 @@ export default function ChallengeDetails() {
                 </>
               )}
 
-              {instance && (
+              {!isBusy && instance?.status === 'running' && (
                 <>
                   <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'var(--bg-secondary)', border: '1px solid var(--border-color)', borderRadius: 8, padding: '10px 14px', marginBottom: 12 }}>
                     <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-                      <Server size={15} color="var(--accent-green)" />
-                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--accent-green)', fontWeight: 700, letterSpacing: '0.1em' }}>
-                        RUNNING
+                      <Server size={15} color={statusColor} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: statusColor, fontWeight: 700, letterSpacing: '0.1em' }}>
+                        {statusLabel}
                       </span>
                     </div>
                     <span style={{ display: 'flex', alignItems: 'center', gap: 6, fontFamily: 'var(--font-mono)', fontSize: '0.85rem', color: 'var(--accent-yellow)', fontWeight: 700 }}>
@@ -466,20 +905,40 @@ export default function ChallengeDetails() {
                     </span>
                   </div>
 
-                  <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--terminal-bg)', border: '1px solid rgba(116,100,220,0.2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
-                    <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', color: 'var(--accent-green)', flex: 1, wordBreak: 'break-all' }}>
-                      {instance.command}
-                    </span>
-                    <button onClick={copyInstance} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
-                      <Copy size={14} />
-                    </button>
-                  </div>
-                  {instCopied && <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--accent-green)', marginBottom: 12 }}>Copied to clipboard!</div>}
+                  {terminalMode ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--terminal-bg)', border: '1px solid rgba(116,100,220,0.2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+                      <TerminalSquare size={15} color={statusColor} />
+                      <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', color: 'var(--accent-green)', flex: 1 }}>
+                        Interactive shell access
+                      </span>
+                    </div>
+                  ) : (
+                    <>
+                      <div style={{ display: 'flex', alignItems: 'center', gap: 10, background: 'var(--terminal-bg)', border: '1px solid rgba(116,100,220,0.2)', borderRadius: 8, padding: '12px 14px', marginBottom: 12 }}>
+                        <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.82rem', color: 'var(--accent-green)', flex: 1, wordBreak: 'break-all' }}>
+                          {instance.command || 'Connection details are being prepared...'}
+                        </span>
+                        <button onClick={copyInstance} style={{ background: 'none', border: 'none', color: 'var(--text-muted)', cursor: 'pointer', flexShrink: 0 }}>
+                          <Copy size={14} />
+                        </button>
+                      </div>
+                      {instCopied && <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', color: 'var(--accent-green)', marginBottom: 12 }}>Copied to clipboard!</div>}
+                    </>
+                  )}
 
                   <div className="d-flex gap-2">
-                    {instance.command.startsWith('http') && (
+                    {terminalMode ? (
+                      <button
+                        onClick={() => setTerminalOpen(true)}
+                        disabled={terminalOpen}
+                        className="btn btn-outline-primary d-flex align-items-center justify-content-center gap-2 flex-fill"
+                        style={{ padding: '10px' }}
+                      >
+                        <TerminalSquare size={14} /> {terminalOpen ? 'Terminal Open' : 'Open Terminal'}
+                      </button>
+                    ) : instance.connection?.url && (
                       <a
-                        href={instance.command} target="_blank" rel="noreferrer"
+                        href={instance.connection.url} target="_blank" rel="noreferrer"
                         className="btn btn-outline-primary d-flex align-items-center justify-content-center gap-2 flex-fill"
                       >
                         <ExternalLink size={14} /> Open
@@ -493,6 +952,15 @@ export default function ChallengeDetails() {
                       <Square size={13} /> Stop
                     </button>
                   </div>
+
+                  {terminalMode && terminalOpen && (
+                    <InteractiveTerminal
+                      challengeId={id}
+                      instance={instance}
+                      onClose={() => setTerminalOpen(false)}
+                      onInstanceUnavailable={handleTerminalInstanceUnavailable}
+                    />
+                  )}
                 </>
               )}
             </div>
@@ -515,13 +983,13 @@ export default function ChallengeDetails() {
                     </label>
                     <input
                         className="form-control flag-input"
-                        placeholder="CTF{flag_here}"
+                        placeholder="CTF{...} or FLAG{...}"
                         value={flag}
                         onChange={e => setFlag(e.target.value)}
                         disabled={submitting}
                       />
                     <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 4 }}>
-                      Format: CTF{`{flag_text}`}
+                      Format: CTF{`{...}`} or FLAG{`{...}`}
                     </div>
                   </div>
 

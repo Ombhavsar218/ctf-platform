@@ -1,74 +1,38 @@
 /**
  * adminService.js
- * Handles admin data: users, submissions, audit logs, solve history.
+ * Handles admin data: users, groups, analytics and the audit trail.
  *
- * Real Django REST endpoints back user management (`/admin/users/`), group
- * listing and the platform analytics aggregates (`/admin/analytics/`).
- * Submission/audit-log reads remain mock + localStorage: no authoritative
- * backend source exists for them yet.
+ * Every method here is backed by the Django REST API. There is no mock or
+ * localStorage fallback: a failure propagates as an ApiError so the pages show
+ * an error state instead of stale, fabricated data.
  */
 
-import { adminUsers as mockUsers, adminSubmissions as mockSubmissions, auditLogs as mockAuditLogs } from '../data/admin';
-import { solveEvents as mockSolves } from '../data/solves';
 import { api } from './api';
 
-const USERS_KEY = 'cyberforge_admin_users';
-const SUBMISSIONS_KEY = 'cyberforge_admin_submissions';
-const AUDIT_KEY = 'cyberforge_audit_logs';
-const SOLVES_KEY = 'cyberforge_solves';
-
-const delay = (ms = 300) => new Promise(res => setTimeout(res, ms));
-
-const read = (key, fallback) => {
-  const raw = localStorage.getItem(key);
-  if (raw) {
-    try { return JSON.parse(raw); } catch { /* fall through */ }
-  }
-  return fallback;
-};
-
-const write = (key, data) => localStorage.setItem(key, JSON.stringify(data));
-
 export const adminService = {
-  async getUsers() {
-    await delay(250);
-    return read(USERS_KEY, mockUsers);
+  /* ---------------------------------------------------------------- */
+  /* Runtime platform settings (Admin -> Settings page).              */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Read the three enforced runtime settings.
+   * GET /admin/settings/
+   */
+  async getPlatformSettings() {
+    return api.get('/admin/settings/');
   },
 
-  async getSubmissions() {
-    await delay(250);
-    return read(SUBMISSIONS_KEY, mockSubmissions);
-  },
-
-  async getAuditLogs() {
-    await delay(250);
-    return read(AUDIT_KEY, mockAuditLogs);
-  },
-
-  async getSolvesHistory() {
-    await delay(250);
-    return read(SOLVES_KEY, mockSolves);
-  },
-
-  async logAction(actor, action, target, ip = '192.168.1.104') {
-    const logs = read(AUDIT_KEY, mockAuditLogs);
-    const next = [{
-      id: Date.now(),
-      actor: actor || 'System',
-      action,
-      target,
-      ip,
-      timestamp: new Date().toISOString().slice(0, 16).replace('T', ' '),
-    }, ...logs].slice(0, 250);
-    write(AUDIT_KEY, next);
-    return next;
+  /**
+   * Partially update runtime settings. The caller re-reads afterwards to
+   * verify persistence before showing success.
+   * PATCH /admin/settings/
+   */
+  async updatePlatformSettings(payload) {
+    return api.patch('/admin/settings/', payload);
   },
 
   /* ---------------------------------------------------------------- */
   /* Real admin user-management API (Admin -> Users page).            */
-  /*                                                                    */
-  /* These call the Django REST backend at /api/v1/admin/. Errors are   */
-  /* thrown as ApiError with a humanised `.message` by api.js.          */
   /* ---------------------------------------------------------------- */
 
   async listUsers({ page = 1, pageSize = 20, search = '', deleted = false } = {}) {
@@ -120,12 +84,52 @@ export const adminService = {
   /**
    * Platform-wide Dashboard/Analytics aggregates. Admin only.
    * GET /api/v1/admin/analytics/
-   *
-   * Every figure is derived server-side from real Solve / Submission / User
-   * records. There is no mock fallback: a failure propagates as ApiError so the
-   * pages can show an error state instead of stale numbers.
    */
   async getAdminAnalytics() {
     return api.get('/admin/analytics/');
   },
+
+  /* ---------------------------------------------------------------- */
+  /* Admin audit trail (Admin -> Audit Logs, Dashboard preview).      */
+  /* ---------------------------------------------------------------- */
+
+  /**
+   * Read-only, paginated and filterable audit trail.
+   *
+   * GET /api/v1/admin/audit-logs/
+   * Query: page, page_size, actor, action, target_type, search,
+   *        date_from, date_to (YYYY-MM-DD).
+   *
+   * Requires the `audit.view_auditlog` permission. Every mutating admin
+   * endpoint writes its own row server-side, so there is no client log call.
+   */
+  async listAuditLogs({
+    page = 1,
+    pageSize = 20,
+    actor = '',
+    action = '',
+    targetType = '',
+    search = '',
+    dateFrom = '',
+    dateTo = '',
+  } = {}) {
+    const params = new URLSearchParams();
+    params.set('page', String(page));
+    params.set('page_size', String(pageSize));
+
+    const add = (key, value) => {
+      const trimmed = (value || '').trim();
+      if (trimmed) params.set(key, trimmed);
+    };
+
+    add('actor', actor);
+    add('action', action);
+    add('target_type', targetType);
+    add('search', search);
+    add('date_from', dateFrom);
+    add('date_to', dateTo);
+    return api.get(`/admin/audit-logs/?${params.toString()}`);
+  },
 };
+
+export default adminService;

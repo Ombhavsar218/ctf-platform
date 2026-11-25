@@ -26,6 +26,7 @@ import Achievements     from './pages/Achievements';
 import Events           from './pages/Events';
 import Profile          from './pages/Profile';
 import Settings         from './pages/Settings';
+import History          from './pages/History';
 
 // Admin
 import AdminLayout       from './pages/admin/AdminLayout';
@@ -99,6 +100,7 @@ function AppRoutes() {
         <Route path="/challenges/:id"    element={<ChallengeDetails />} />
         <Route path="/achievements"      element={<Achievements />} />
         <Route path="/profile"           element={<Profile />} />
+        <Route path="/history"           element={<History />} />
         <Route path="/settings"          element={<Settings />} />
       </Route>
 

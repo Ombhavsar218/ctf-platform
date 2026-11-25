@@ -36,16 +36,52 @@ const formatStamp = (iso) => {
   );
 };
 
-function AuditPreview() {
-  // There is no authoritative server-side audit-log source yet: the admin
-  // JSON-API writes are not recorded in django.contrib.admin's LogEntry, and
-  // the previous implementation read a client-side mock. Rather than present
-  // fabricated activity as real, the panel reports that it is unavailable.
+function AuditPreview({ logs, loading, error }) {
+  if (loading) {
+    return (
+      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
+        Loading admin activity...
+      </div>
+    );
+  }
+  if (error) {
+    return (
+      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
+        {error}
+      </div>
+    );
+  }
+  if (!logs.length) {
+    return (
+      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
+        No administrative actions recorded yet.
+      </div>
+    );
+  }
   return (
     <div className="d-flex flex-column">
-      <div style={{ padding: '24px 0', textAlign: 'center', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: '0.85rem' }}>
-        Admin activity history isn’t available yet.
-      </div>
+      {logs.map((log, index) => (
+        <div
+          key={log.id}
+          style={{
+            padding: '10px 0',
+            borderBottom: index < logs.length - 1 ? '1px solid var(--border-color)' : 'none',
+          }}
+        >
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.72rem', fontWeight: 700 }}>
+            {log.actor}
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.68rem', color: 'var(--accent-cyan)', marginTop: 2 }}>
+            {log.action}
+          </div>
+          <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)', marginTop: 2, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            {log.target_label || `${log.target_type} #${log.target_id}`}
+          </div>
+          <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.65rem', color: 'var(--text-muted)', marginTop: 2 }}>
+            {formatStamp(log.created_at)}
+          </div>
+        </div>
+      ))}
     </div>
   );
 }
@@ -55,23 +91,34 @@ export default function AdminDashboard() {
   const greeting = useGreeting(user?.displayName || user?.username);
   const [challenges, setChallenges] = useState([]);
   const [analytics, setAnalytics] = useState(null);
+  const [auditLogs, setAuditLogs] = useState([]);
+  const [auditLoading, setAuditLoading] = useState(true);
+  const [auditError, setAuditError] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
 
   const load = async () => {
     setLoading(true);
     setError('');
+    setAuditLoading(true);
+    setAuditError('');
     try {
-      const [list, stats] = await Promise.all([
+      const [list, stats, audit] = await Promise.all([
         challengeService.getAllChallenges(),
         adminService.getAdminAnalytics(),
+        adminService.listAuditLogs({ page: 1, pageSize: 5 }).catch((err) => {
+          setAuditError(err?.message || 'Admin activity unavailable.');
+          return null;
+        }),
       ]);
       setChallenges(Array.isArray(list) ? list : []);
       setAnalytics(stats);
+      setAuditLogs(Array.isArray(audit?.results) ? audit.results : []);
     } catch (err) {
       setError(err?.message || 'Could not load dashboard data.');
     } finally {
       setLoading(false);
+      setAuditLoading(false);
     }
   };
 
@@ -388,8 +435,11 @@ export default function AdminDashboard() {
           <div style={{ background: 'var(--bg-card)', border: '1px solid var(--border-color)', borderRadius: 12, padding: '18px 20px', height: '100%' }}>
             <div className="section-title mb-3 d-flex align-items-center gap-2">
               <Radio size={14} color="var(--accent-cyan)" /> Recent Admin Activity
+              <Link to="/admin/audit-logs" className="ms-auto d-flex align-items-center gap-1" style={{ fontSize: '0.78rem', color: 'var(--text-muted)', fontWeight: 500 }}>
+                View all <ArrowRight size={13} />
+              </Link>
             </div>
-            <AuditPreview />
+            <AuditPreview logs={auditLogs} loading={auditLoading} error={auditError} />
           </div>
         </div>
       </div>

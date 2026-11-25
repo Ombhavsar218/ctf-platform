@@ -26,7 +26,10 @@ function boardQuery({ period, category, page, limit } = {}) {
 }
 
 async function fetchBoard(params = {}) {
-  const data = await api.get(`/leaderboard/${boardQuery(params)}`, { auth: false });
+  // The board is public by default, but an administrator can require sign-in.
+  // Sending the token when one exists keeps authenticated access working in
+  // both modes without ever exposing it to an anonymous visitor.
+  const data = await api.get(`/leaderboard/${boardQuery(params)}`);
   return data.results ?? data;
 }
 
@@ -59,7 +62,7 @@ export const leaderboardService = {
    * Raw paginated envelope: { count, next, previous, results }.
    */
   async getLeaderboardPage(params = {}) {
-    return api.get(`/leaderboard/${boardQuery(params)}`, { auth: false });
+    return api.get(`/leaderboard/${boardQuery(params)}`);
   },
 
   /**

@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from 'react';
+import React, { useEffect, useMemo, useState } from 'react';
 import { Link } from 'react-router-dom';
 import {
   Trophy, Flag, Zap, CheckCircle, Lightbulb, ArrowRight, Target, Medal,
@@ -11,13 +11,6 @@ import Terminal from '../components/ui/Terminal';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import { challengeService } from '../services/challengeService';
 import { activityKey } from '../utils/activity';
-
-const termLines = [
-  { type: 'cmd', text: './flaghunt --status', delay: 300 },
-  { type: 'out', text: 'Platform: ONLINE', delay: 900 },
-  { type: 'out', text: 'Active challenges: 18', delay: 1300 },
-  { type: 'success', text: 'Keep hacking, operator.', delay: 2300 },
-];
 
 const ACTIVITY_COLORS = {
   solve: 'var(--accent-green)',
@@ -80,7 +73,17 @@ export default function Dashboard() {
   const [challenges, setChallenges] = useState([]);
   const [challengesLoading, setChallengesLoading] = useState(true);
 
-  const userType = user?.userType || 'student';
+  // The status terminal animates once on mount, so it is not rendered until
+  // the challenge list has settled; otherwise it would capture the loading
+  // value and keep showing the wrong number.
+  const termLines = useMemo(() => [
+    { type: 'cmd', text: './flaghunt --status', delay: 300 },
+    { type: 'out', text: 'Platform: ONLINE', delay: 900 },
+    { type: 'out', text: `Active challenges: ${challenges.length}`, delay: 1300 },
+    { type: 'success', text: 'Keep hacking, operator.', delay: 2300 },
+  ], [challenges.length]);
+
+  const userType = user?.learning_mode ?? user?.learningMode ?? user?.userType ?? 'student';
   const focusAreas = user?.onboarding?.focusAreas || [];
   const isStudent = userType === 'student';
   const greeting = useGreeting(user?.displayName || user?.username);
@@ -179,6 +182,12 @@ export default function Dashboard() {
     .slice(0, 5);
 
   const avgPtsPerSolve = solvedCount ? Math.round(earned / solvedCount) : 0;
+
+  // Daily solve streaks are server-authoritative (GET /api/v1/stats/me/):
+  // a streak day is a calendar day in the server's configured timezone on
+  // which the player recorded a successful solve. Zero is a real value.
+  const currentStreak = stats?.current_streak ?? 0;
+  const longestStreak = stats?.longest_streak ?? 0;
   const bestCategory = categoryStats[0];
   const catColor = name => categoryProgress.find(c => c.name === name)?.color || 'var(--accent-green)';
 
@@ -369,6 +378,7 @@ export default function Dashboard() {
                         {[
                           { label: 'Challenges solved', value: `${totalSolved}/${totalAvail}` },
                           { label: 'Categories mastered', value: masteredCount },
+                          { label: 'Current streak', value: `${currentStreak} day${currentStreak === 1 ? '' : 's'}` },
                         ].map(m => (
                           <div key={m.label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '10px 14px' }}>
                             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>{m.label}</div>
@@ -380,6 +390,7 @@ export default function Dashboard() {
                         {[
                           { label: 'Avg pts / solve', value: avgPtsPerSolve },
                           { label: 'Level progress', value: isMaxLevel ? `${tier} · max` : `${levelPct}% to L${level + 1}` },
+                          { label: 'Longest streak', value: `${longestStreak} day${longestStreak === 1 ? '' : 's'}` },
                         ].map(m => (
                           <div key={m.label} style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-color)', borderRadius: 10, padding: '10px 14px' }}>
                             <div style={{ fontFamily: 'var(--font-mono)', fontSize: '0.6rem', color: 'var(--text-muted)', letterSpacing: '0.12em', textTransform: 'uppercase' }}>{m.label}</div>
@@ -468,7 +479,7 @@ export default function Dashboard() {
         <div className="col-lg-4">
           <div className="mb-4 animate-fade-in-up delay-100">
             <div className="section-title mb-3">System Status</div>
-            <Terminal lines={termLines} />
+            {!challengesLoading && <Terminal lines={termLines} />}
           </div>
 
           <div className="animate-fade-in-up delay-300">

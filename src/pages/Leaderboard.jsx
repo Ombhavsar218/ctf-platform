@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { Link } from 'react-router-dom';
 import LoadingSpinner from '../components/ui/LoadingSpinner';
 import MedalIcon from '../components/ui/MedalIcon';
 import LeaderboardGraph from '../components/ui/LeaderboardGraph';
@@ -102,6 +103,7 @@ export default function Leaderboard() {
   const [tab, setTab] = useState('Global');
   const [data, setData] = useState([]);
   const [loading, setLoading] = useState(true);
+  const [loadError, setLoadError] = useState('');
   const [filter, setFilter] = useState('All');
   const [search, setSearch] = useState('');
   const [categories, setCategories] = useState([]);
@@ -128,6 +130,7 @@ export default function Leaderboard() {
     let cancelled = false;
     (async () => {
       setLoading(true);
+      setLoadError('');
       try {
         const opts = { limit: 50 };
         let list;
@@ -139,8 +142,13 @@ export default function Leaderboard() {
           list = await leaderboardService.getGlobalLeaderboard(opts);
         }
         if (!cancelled) setData(Array.isArray(list) ? list : []);
-      } catch {
-        if (!cancelled) setData([]);
+      } catch (error) {
+        if (!cancelled) {
+          setData([]);
+          setLoadError(
+            error?.message || 'The leaderboard could not be loaded.',
+          );
+        }
       } finally {
         if (!cancelled) setLoading(false);
       }
@@ -264,6 +272,23 @@ export default function Leaderboard() {
 
       {loading ? (
         <LoadingSpinner fullPage text="Loading leaderboard..." />
+      ) : loadError ? (
+        <div role="alert" style={{
+          background: 'rgba(239,68,68,0.08)',
+          border: '1px solid rgba(239,68,68,0.3)',
+          borderRadius: 12,
+          padding: '18px 20px',
+          color: 'var(--diff-hard)',
+          fontFamily: 'var(--font-mono)',
+          fontSize: '0.85rem',
+        }}>
+          {loadError}
+          {!isAuthenticated && (
+            <div style={{ marginTop: 8 }}>
+              <Link to="/login" style={{ color: 'var(--accent-cyan)' }}>Sign in to view the leaderboard.</Link>
+            </div>
+          )}
+        </div>
       ) : (
         <>
           {/* Podium */}

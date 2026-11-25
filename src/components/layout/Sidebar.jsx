@@ -2,7 +2,7 @@ import React from 'react';
 import { NavLink } from 'react-router-dom';
 import {
   LayoutDashboard, Flag, Trophy, Award,
-  User, Settings, Shield, BookOpen
+  User, Settings, Shield, BookOpen, History as HistoryIcon,
 } from 'lucide-react';
 import { useApp } from '../../context/AppContext';
 
@@ -14,12 +14,18 @@ const navItems = [
 ];
 
 const accountItems = [
-  { to: '/profile',  icon: User,     label: 'Profile', color: 'var(--accent-green)' },
-  { to: '/settings', icon: Settings, label: 'Settings' },
+  { to: '/profile',  icon: User,          label: 'Profile', color: 'var(--accent-green)' },
+  { to: '/history',  icon: HistoryIcon,   label: 'History' },
+  { to: '/settings', icon: Settings,      label: 'Settings' },
 ];
 
 export default function Sidebar() {
-  const { user } = useApp();
+  const { user, stats } = useApp();
+
+  // The daily solve streak is server-authoritative (GET /api/v1/stats/me/).
+  // It is read from the stats payload and falls back to the value folded into
+  // `user` while the stats request is still in flight.
+  const currentStreak = stats?.current_streak ?? user?.streak ?? 0;
 
   return (
     <aside className="cf-sidebar d-none d-lg-flex flex-column">
@@ -96,7 +102,7 @@ export default function Sidebar() {
           <div className="d-flex justify-content-between mb-1">
             <span style={{ fontSize: '0.75rem', color: 'var(--text-secondary)' }}>Streak</span>
             <span style={{ fontFamily: 'var(--font-mono)', fontSize: '0.8rem', color: 'var(--accent-orange)', fontWeight: 700 }}>
-              {user.streak ? `${user.streak} days` : '—'}
+              {currentStreak} day{currentStreak === 1 ? '' : 's'}
             </span>
           </div>
           <div className="d-flex justify-content-between mb-2">
